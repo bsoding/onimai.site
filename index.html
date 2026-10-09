@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Onimai</title>
+<style>
+    :root {
+        --purple: #6a0dad;
+        --purple-dark: #3b0a52;
+        --cyan: #1aa3ff;
+        --bg: #0b0612;
+    }
+
+    * {
+        box-sizing: border-box;
+        font-family: "Segoe UI", sans-serif;
+    }
+
+    body {
+        margin: 0;
+        background: radial-gradient(circle at top, #1a0f2e, var(--bg));
+        color: white;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Top-left branding */
+    .top-left {
+        position: absolute;
+        top: 20px;
+        left: 24px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .top-left img {
+        width: 34px;
+        height: 34px;
+    }
+
+    .top-left span {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--cyan);
+    }
+
+    .container {
+        text-align: center;
+        width: 100%;
+        max-width: 500px;
+        padding: 0 20px;
+    }
+
+    .main-icon {
+        width: 180px;
+        margin-bottom: 24px;
+        filter: drop-shadow(0 0 25px rgba(122, 0, 255, 0.45));
+    }
+
+    .description {
+        width: 100%;
+        padding: 16px;
+        margin-bottom: 28px;
+    
+        background: rgba(20, 10, 35, 0.85);
+        color: white;
+    
+        border: 2px solid var(--purple);
+        border-radius: 12px;
+    
+        font-size: 14px;
+        line-height: 1.6;
+        text-align: center;
+    
+        box-shadow: inset 0 0 15px rgba(122, 0, 255, 0.25);
+    }
+
+
+    .description::placeholder {
+        color: rgba(200, 170, 255, 0.5);
+    }
+
+    .description:focus {
+        border-color: var(--cyan);
+        box-shadow: 0 0 18px rgba(26, 163, 255, 0.45);
+    }
+
+    .btn {
+        width: 220px;
+        padding: 14px;
+        margin: 10px 0;
+        font-size: 16px;
+        font-weight: 600;
+        border-radius: 10px;
+        border: none;
+        cursor: pointer;
+        transition: all 0.25s ease;
+    }
+
+    .purchase {
+        background: linear-gradient(135deg, var(--cyan), var(--purple));
+        color: white;
+    }
+
+    .purchase:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0 20px rgba(26, 163, 255, 0.6);
+    }
+
+    .support {
+        background: transparent;
+        color: var(--cyan);
+        border: 2px solid var(--purple);
+    }
+
+    .support:hover {
+        background: var(--purple-dark);
+        box-shadow: 0 0 15px rgba(106, 13, 173, 0.6);
+    }
+</style>
+</head>
+<body>
+
+<!-- Top-left -->
+<div class="top-left">
+    <img src="onimai.png" alt="Onimai Icon">
+    <span>Onimai</span>
+</div>
+
+<!-- Center -->
+<div class="container">
+    <img src="onimai.png" alt="Onimai Logo" class="main-icon">
+
+    <div class="description">
+        安価なリモート アクセス ツール。すべてのクライアントを 1 台のコンピュータからリモートで制御します。完全な仮想マシン対策とウイルス対策バイパス。 2021 年から信頼されています
+    </div>
+
+
+    <button class="btn purchase">Purchase</button>
+    <br>
+    <button class="btn support">Support</button>
+</div>
+
+</body>
+</html>
