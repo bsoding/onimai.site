@@ -53,11 +53,22 @@ Custom badges support PNG, JPG, WEBP, SVG, and animated GIF. `label` supplies th
 
 ### `settings/connections.txt`
 
-Use `PLATFORM=value`, one connection per line. They appear in file order. Platform names are case-insensitive. Empty values and unknown platforms are ignored; a blank file removes all social links.
+Every supported platform and alias is already listed in the file. Fill in `PLATFORM=value` to show a connection, or leave the value blank to hide it. They appear in file order. Platform names are case-insensitive. Empty values and unknown platforms are ignored; a blank file removes all social links.
 
 ```text
 GITHUB=bsoding
 YOUTUBE=jvbjvbj
+INSTAGRAM=
+SPOTIFY=
+TWITCH=
+TIKTOK=
+X=
+TWITTER=
+TELEGRAM=
+DISCORD=
+WEBSITE=
+EMAIL=
+MAIL=
 ```
 
 Handles automatically become profile links. A leading `@` is optional. You can also supply a full HTTP/HTTPS URL, useful for channel IDs, Spotify artists, Discord invites, and custom destinations:
@@ -74,7 +85,7 @@ WEBSITE=onimai.site
 EMAIL=you@example.com
 ```
 
-Supported platforms: `GITHUB`, `YOUTUBE`, `INSTAGRAM`, `SPOTIFY`, `TWITCH`, `TIKTOK`, `X` / `TWITTER`, `TELEGRAM`, `DISCORD`, `WEBSITE`, `EMAIL` / `MAIL`. YouTube handles use `/@handle`; Spotify handles use `/user/handle`. Discord usernames are copied when clicked, numeric Discord user IDs open that profile, and full Discord invite URLs open the invite. Website values accept a domain or full URL. Email values create a mail link.
+Supported platforms: `GITHUB`, `YOUTUBE`, `INSTAGRAM`, `SPOTIFY`, `TWITCH`, `TIKTOK`, `X` / `TWITTER`, `TELEGRAM`, `DISCORD`, `WEBSITE`, `EMAIL` / `MAIL`. `TWITTER` is an alias of `X`, and `MAIL` is an alias of `EMAIL`; fill in whichever name you prefer. YouTube handles use `/@handle`; Spotify handles use `/user/handle`. Discord usernames are copied when clicked, numeric Discord user IDs open that profile, and full Discord invite URLs open the invite. Website values accept a domain or full URL. Email values create a mail link.
 
 Blank lines and lines beginning with `#` are ignored in badges and connections. Windows line endings and UTF-8 BOMs are supported. If a settings file is missing or cannot be fetched, its HTML defaults are used; an existing empty file clears the corresponding section (an empty name uses the fallback name).
 
@@ -93,7 +104,7 @@ The `PROFILE` object near the top of `index.html` controls media paths, typewrit
 
 The view count is a manually configured display value (`PROFILE.views`), not a global analytics service. Set it to `null` to hide it. GitHub Pages cannot maintain a server-side counter on its own.
 
-The Discord card starts as a static, offline example. Edit its settings or set `discord.enabled: false` to hide it. For live presence, join the [Lanyard Discord server](https://discord.gg/lanyard), then put your Discord user ID in `discord.userId`. The page reads the [public Lanyard API](https://github.com/Phineas/lanyard) every 30 seconds while visible. If that service is unavailable, it keeps the configured fallback. `discord.username` and `discord.avatar` optionally override the live account's name and picture.
+The Discord presence card is hidden for now (`discord.enabled: false`). Its configuration remains in `PROFILE.discord` in `index.html` for future setup. `DISCORD=` is also blank in the connections file, so no Discord social icon appears.
 
 Keyboard entry, focusable tooltips, accessible audio controls, mobile layouts, and reduced-motion preferences are supported. The top-right button pauses the video and particles. Text names, bios, and labels are rendered as text, so special characters are safe.
 
