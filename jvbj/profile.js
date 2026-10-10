@@ -1,4 +1,4 @@
-/* Profile settings and badges live at the top of index.html. */
+/* Profile text lives in settings/. Media and advanced options live in index.html. */
 (() => {
   "use strict";
 
@@ -13,6 +13,7 @@
     donor: svg('<path d="M12 3c-2 4-7 7-7 12a7 7 0 0 0 14 0c0-3-1.5-5-3-7 0 4-2 4-2 4s1-5-2-9Z" fill="currentColor" stroke="none"/>'),
     booster: svg('<path d="m13 2-9 12h7l-1 8 10-13h-7Z" fill="currentColor" stroke="none"/>'),
     developer: svg('<path d="m8 6-6 6 6 6m8-12 6 6-6 6M14 3l-4 18"/>'),
+    owner: svg('<path d="m3 6 4.5 4L12 3l4.5 7L21 6l-2 12H5ZM5 21h14"/>'),
     gift: svg('<path d="M3 9h18v4H3zM5 13v8h14v-8M12 9v12"/><path d="M12 9H8a3 3 0 1 1 3-3Zm0 0h4a3 3 0 1 0-3-3Z"/>'),
     bug: svg('<path d="M8 8a4 4 0 0 1 8 0v8a4 4 0 0 1-8 0ZM12 9v11M7 4l2 2m8-2-2 2M3 9l5 2m13-2-5 2M3 15h5m13 0h-5M5 21l4-3m10 3-4-3"/>'),
     heart: svg('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" fill="currentColor" stroke="none"/>'),
@@ -36,6 +37,31 @@
     play: svg('<path d="m8 4 12 8-12 8Z" fill="currentColor" stroke="none"/>'),
   };
   icons.star = icons.og;
+
+  const badgeLabels = {
+    developer: "Developer", owner: "Owner", premium: "Premium", verified: "Verified",
+    staff: "Staff", og: "OG", donor: "Donor", booster: "Server Booster", gift: "Gifter",
+    bug: "Bug Hunter", star: "Star", heart: "Heart", "image-host": "Image Host",
+  };
+  const platforms = {
+    GITHUB: { icon: "github", label: "GitHub", prefix: "https://github.com/" },
+    YOUTUBE: { icon: "youtube", label: "YouTube", prefix: "https://www.youtube.com/@" },
+    INSTAGRAM: { icon: "instagram", label: "Instagram", prefix: "https://www.instagram.com/" },
+    SPOTIFY: { icon: "spotify", label: "Spotify", prefix: "https://open.spotify.com/user/" },
+    TWITCH: { icon: "twitch", label: "Twitch", prefix: "https://www.twitch.tv/" },
+    TIKTOK: { icon: "tiktok", label: "TikTok", prefix: "https://www.tiktok.com/@" },
+    X: { icon: "x", label: "X", prefix: "https://x.com/" },
+    TWITTER: { icon: "x", label: "X", prefix: "https://x.com/" },
+    TELEGRAM: { icon: "telegram", label: "Telegram", prefix: "https://t.me/" },
+    DISCORD: { icon: "discord", label: "Discord" },
+    WEBSITE: { icon: "globe", label: "Website" },
+    EMAIL: { icon: "mail", label: "Email" },
+    MAIL: { icon: "mail", label: "Email" },
+  };
+
+  let badges = BADGES;
+  let connections = PROFILE.links || [];
+  let bios = (Array.isArray(PROFILE.bio) ? PROFILE.bio : [PROFILE.bio]).map((text) => String(text || "")).filter(Boolean);
 
   let displayName = PROFILE.fallbackName || "jvbj";
   let entered = false;
@@ -74,7 +100,7 @@
 
   function renderBadges() {
     $("badges").replaceChildren();
-    for (const badge of BADGES) {
+    for (const badge of badges) {
       if (badge.hidden) continue;
       const url = safeURL(badge.url);
       const el = document.createElement(url ? "a" : "span");
@@ -114,7 +140,7 @@
 
   function renderLinks() {
     $("socialLinks").replaceChildren();
-    for (const link of PROFILE.links || []) {
+    for (const link of connections) {
       const url = safeURL(link.url, true);
       if (link.hidden || (!url && !link.copy)) continue;
       const el = document.createElement(link.copy ? "button" : "a");
@@ -138,29 +164,101 @@
     if (!PROFILE.discord?.username && !PROFILE.discord?.userId) $("discordUsername").textContent = name;
   }
 
-  async function loadName() {
-    if (!PROFILE.nameFile) return;
+  async function readSetting(path) {
+    if (!path) return null;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const response = await fetch(PROFILE.nameFile, { cache: "no-store", signal: controller.signal });
-      if (!response.ok) return;
-      const name = (await response.text()).replace(/^\uFEFF/, "").trim().split(/\r?\n/)[0].trim();
-      // Reject a host's HTML error page, while rendering names safely as text.
-      if (name && !/^\s*(<!doctype|<html)/i.test(name)) setName(name);
-    } catch { /* Keep the fallback when the text file is unavailable. */ }
+      const response = await fetch(path, { cache: "no-store", signal: controller.signal });
+      if (!response.ok || response.headers.get("content-type")?.includes("text/html")) return null;
+      return (await response.text()).replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+    } catch { return null; }
     finally { clearTimeout(timeout); }
   }
 
-  const bios = (Array.isArray(PROFILE.bio) ? PROFILE.bio : [PROFILE.bio]).map((text) => String(text || "")).filter(Boolean);
+  function settingLines(text) {
+    return text.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+  }
+
+  function parseBadges(text) {
+    return settingLines(text).flatMap((line) => {
+      const id = line.toLowerCase();
+      const custom = BADGES.find((badge) => String(badge.id || badge.icon || "").toLowerCase() === id);
+      if (custom) return [custom];
+      if (Object.hasOwn(badgeLabels, id)) return [{ icon: id, label: badgeLabels[id] }];
+      return [];
+    });
+  }
+
+  function parseConnections(text) {
+    return settingLines(text).flatMap((line) => {
+      const separator = line.indexOf("=");
+      if (separator < 1) return [];
+      const key = line.slice(0, separator).trim().toUpperCase();
+      const value = line.slice(separator + 1).trim();
+      if (!Object.hasOwn(platforms, key) || !value) return [];
+      const platform = platforms[key];
+      if (/^https?:\/\//i.test(value)) {
+        const url = safeURL(value);
+        return url ? [{ icon: platform.icon, label: platform.label, url }] : [];
+      }
+      // Handles are plain text; other URI schemes are not profile links.
+      if (/^[a-z][a-z\d+.-]*:/i.test(value)) return [];
+      if (key === "DISCORD") {
+        return /^\d{17,20}$/.test(value)
+          ? [{ ...platform, url: `https://discord.com/users/${value}` }]
+          : [{ ...platform, copy: value.replace(/^@/, "") }];
+      }
+      if (key === "EMAIL" || key === "MAIL") {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? [{ ...platform, url: `mailto:${value}` }] : [];
+      }
+      if (key === "WEBSITE") {
+        const url = !/\s/.test(value) && safeURL(`https://${value}`);
+        return url ? [{ ...platform, url }] : [];
+      }
+      const handle = value.replace(/^@/, "");
+      if (!handle || /[\s/\\?#]/.test(handle)) return [];
+      return [{ icon: platform.icon, label: platform.label, url: platform.prefix + encodeURIComponent(handle) }];
+    });
+  }
+
+  function renderBio() {
+    $("bio").hidden = !bios.length;
+    $("bioText").textContent = bios[0] || "";
+    $("typeCursor").hidden = !PROFILE.typewriter || reducedMotion.matches || !bios.length;
+    document.querySelector('meta[name="description"]').content = bios[0] || displayName;
+    document.querySelector('meta[property="og:description"]').content = bios[0] || displayName;
+    if (entered) startTypewriter();
+  }
+
+  async function loadSettings() {
+    const [nameText, biosText, badgesText, connectionsText] = await Promise.all([
+      readSetting(PROFILE.nameFile), readSetting(PROFILE.biosFile),
+      readSetting(PROFILE.badgesFile), readSetting(PROFILE.connectionsFile),
+    ]);
+    if (nameText !== null) {
+      const name = nameText.trim().split("\n")[0].trim();
+      if (name) setName(name);
+    }
+    if (biosText !== null) bios = biosText.split(/\n[\t ]*\n(?:[\t ]*\n)*/).map((bio) => bio.trim()).filter(Boolean);
+    // A present, empty file is intentional: it clears that section.
+    if (badgesText !== null) badges = parseBadges(badgesText);
+    if (connectionsText !== null) connections = parseConnections(connectionsText);
+    renderBio();
+    renderBadges();
+    renderLinks();
+  }
+
   function startTypewriter() {
     clearTimeout(typeTimer);
+    $("bio").removeAttribute("aria-label");
+    $("bioText").removeAttribute("aria-hidden");
     $("typeCursor").hidden = !PROFILE.typewriter || reducedMotion.matches || !bios.length;
     if (!PROFILE.typewriter || reducedMotion.matches || !bios.length) {
       $("bioText").textContent = bios[0] || "";
       return;
     }
-    $("bio").setAttribute("aria-label", bios.join(". "));
+    $("bio").setAttribute("aria-label", bios.join("\n\n"));
     $("bioText").setAttribute("aria-hidden", "true");
     let index = 0;
     let chars = Array.from(bios[index]);
@@ -316,9 +414,6 @@
   } else { video.hidden = true; }
   const audioURL = safeURL(PROFILE.audio);
   if (audioURL) audio.src = audioURL;
-  $("bioText").textContent = bios[0] || "";
-  document.querySelector('meta[name="description"]').content = bios[0] || displayName;
-  document.querySelector('meta[property="og:description"]').content = bios[0] || displayName;
   if (PROFILE.location) {
     $("location").hidden = false;
     $("location").innerHTML = icons.pin;
@@ -331,10 +426,11 @@
   $("profileViews").setAttribute("aria-label", `${$("viewsCount").textContent} profile views`);
 
   setName(displayName);
-  loadName();
+  renderBio();
   renderBadges();
   renderLinks();
   renderDiscord();
+  loadSettings();
   makeParticles();
   // Keep all media muted until the visitor's entry gesture.
   $("muteButton").innerHTML = icons.volume;

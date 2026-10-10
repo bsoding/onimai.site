@@ -2,9 +2,84 @@
 
 Static guns.lol default-layout replica for **https://onimai.site/jvbj/**. There is no build step. All paths are relative, so the folder also works on other GitHub Pages sites.
 
-## Your name, picture, and background
+## Text settings
 
-- **Name:** edit `assets/name.txt`. The first line becomes the display name, browser title, and default Discord card name. Keep the file as plain UTF-8 text. It is fetched without the browser cache.
+Edit the plain UTF-8 files in **`jvbj/settings/`**. They are fetched without the browser cache each time the page loads. After pushing changes, allow GitHub Pages to deploy, then refresh the profile. No HTML edits are needed for the name, bios, built-in badges, or connections.
+
+### `settings/name.txt`
+
+The first line becomes the display name, browser title, and default Discord card name:
+
+```text
+jvbj
+```
+
+### `settings/bios.txt`
+
+Separate bios with a **blank line**. Consecutive nonblank lines belong to the same bio, and their line breaks are preserved on the page. The typewriter rotates through the bios in order. A blank file hides the bio.
+
+```text
+somewhere on the internet
+
+a really long paragraph blah blah blah
+blah blah blah
+```
+
+### `settings/badges.txt`
+
+Put one badge name per line, in display order. **Leave the file completely blank for no badges.**
+
+```text
+developer
+owner
+premium
+```
+
+Available names: `developer`, `owner`, `premium`, `verified`, `staff`, `og`, `donor`, `booster`, `gift`, `bug`, `star`, `heart`, `image-host`. Names are case-insensitive; unknown names are ignored. These are local, cosmetic template badges, independent of any guns.lol account.
+
+For a custom image, color, label, or link, add a definition to the `BADGES` list near the top of `index.html`, then put its `id` (or built-in `icon` name) in `settings/badges.txt`:
+
+```js
+{ id: "custom", image: "assets/badges/custom.png", label: "My badge", color: "#a78bfa" }
+```
+
+```text
+developer
+custom
+premium
+```
+
+Custom badges support PNG, JPG, WEBP, SVG, and animated GIF. `label` supplies the hover and keyboard tooltip; an optional `url` makes the badge clickable. A blank badge file still hides every badge, including custom definitions.
+
+### `settings/connections.txt`
+
+Use `PLATFORM=value`, one connection per line. They appear in file order. Platform names are case-insensitive. Empty values and unknown platforms are ignored; a blank file removes all social links.
+
+```text
+GITHUB=bsoding
+YOUTUBE=jvbjvbj
+```
+
+Handles automatically become profile links. A leading `@` is optional. You can also supply a full HTTP/HTTPS URL, useful for channel IDs, Spotify artists, Discord invites, and custom destinations:
+
+```text
+INSTAGRAM=your.username
+TWITCH=yourusername
+TIKTOK=@yourusername
+X=yourusername
+TELEGRAM=yourusername
+SPOTIFY=https://open.spotify.com/artist/your-artist-id
+DISCORD=your.username
+WEBSITE=onimai.site
+EMAIL=you@example.com
+```
+
+Supported platforms: `GITHUB`, `YOUTUBE`, `INSTAGRAM`, `SPOTIFY`, `TWITCH`, `TIKTOK`, `X` / `TWITTER`, `TELEGRAM`, `DISCORD`, `WEBSITE`, `EMAIL` / `MAIL`. YouTube handles use `/@handle`; Spotify handles use `/user/handle`. Discord usernames are copied when clicked, numeric Discord user IDs open that profile, and full Discord invite URLs open the invite. Website values accept a domain or full URL. Email values create a mail link.
+
+Blank lines and lines beginning with `#` are ignored in badges and connections. Windows line endings and UTF-8 BOMs are supported. If a settings file is missing or cannot be fetched, its HTML defaults are used; an existing empty file clears the corresponding section (an empty name uses the fallback name).
+
+## Picture and background
+
 - **Profile picture:** replace `assets/avatar.png`. Use the same filename, or change `PROFILE.avatar` near the top of `index.html` to another image inside `assets/`. PNG, JPG, WEBP, GIF, and SVG work.
 - **Background video:** replace `assets/background.mp4`. MP4 with H.264 video is broadly supported. For WEBM, change `PROFILE.backgroundVideo` to `assets/background.webm`. Videos loop, fill the viewport, and begin after the visitor enters. Video audio uses the volume control too.
 - **Image background / video fallback:** replace `assets/background.svg` or point `PROFILE.backgroundImage` to an image in `assets/`. Set `backgroundVideo: ""` for an image-only page. If the video is missing or unsupported, the fallback image remains visible.
@@ -12,30 +87,9 @@ Static guns.lol default-layout replica for **https://onimai.site/jvbj/**. There 
 
 The included forest video and default avatar were created for this template. Replace them with your own media. After pushing replacements, allow GitHub Pages to finish deploying; an already open profile needs to be refreshed.
 
-## Badges
-
-Edit the `BADGES` array at the very top of `index.html`. Its order is the display order. These are local, cosmetic template badges, independent of any guns.lol account.
-
-```js
-const BADGES = [
-  { icon: "premium", label: "Premium" },
-  { icon: "verified", label: "Verified", color: "#a78bfa" },
-  { image: "assets/badges/custom.png", label: "My badge" },
-  { icon: "developer", label: "Developer", url: "https://github.com/your-name" },
-];
-```
-
-Built-in badge icons: `premium`, `verified`, `staff`, `og`, `donor`, `booster`, `developer`, `gift`, `bug`, `star`, `heart`, `image-host`. Custom badges support PNG, JPG, WEBP, SVG, and animated GIF. `label` supplies the hover and keyboard tooltip. Set `hidden: true` to hide one, or use an empty array to remove them all.
-
 ## Other settings
 
-The `PROFILE` object immediately below the badge list controls the bio, social links, optional location, accent, card transparency, particles, entry text, sound, and mouse tilt. Social links initially go to platform homepages; replace them with your own profile URLs. Custom social icons use the same `image` field as badges. Available social icons: `discord`, `github`, `spotify`, `youtube`, `instagram`, `globe`, `x`, `tiktok`, `twitch`, `telegram`, `mail`.
-
-To make an icon copy your username instead of opening a URL:
-
-```js
-{ icon: "discord", label: "Discord", copy: "your.username" }
-```
+The `PROFILE` object near the top of `index.html` controls media paths, typewriter animation, optional location, accent, card transparency, particles, entry text, sound, and mouse tilt. Its name, bio, badge, and connection defaults are fallbacks for unavailable settings files.
 
 The view count is a manually configured display value (`PROFILE.views`), not a global analytics service. Set it to `null` to hide it. GitHub Pages cannot maintain a server-side counter on its own.
 
@@ -51,7 +105,7 @@ Serve the repository root locally, then open `/jvbj/`:
 python3 -m http.server 8000
 ```
 
-Opening `index.html` directly as a `file://` URL cannot fetch `name.txt`; use a web server or GitHub Pages.
+Opening `index.html` directly as a `file://` URL cannot fetch the settings files; use a web server or GitHub Pages.
 
 ## Reference research
 

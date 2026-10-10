@@ -5,31 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <!-- ==============================================================
-       EDIT YOUR BADGES HERE. Order in this list = order on the page.
-       Built-in icons: premium, verified, staff, og, donor, booster,
-       developer, gift, bug, star, heart, image-host.
-       Custom image: { label: "My badge", image: "assets/badges/my.png" }
-       Optional: color: "#a78bfa", url: "https://example.com"
-       Remove every badge by setting BADGES = [].
+       EDIT YOUR PROFILE IN settings/name.txt, settings/bios.txt,
+       settings/badges.txt, and settings/connections.txt.
+       Put one badge name per line; a blank badges.txt hides all badges.
+       Optional custom badge definitions live below. Add their id to
+       badges.txt, e.g. custom. Color and URL are optional.
        ============================================================== -->
   <script>
     const BADGES = [
-      { icon: "premium", label: "Premium" },
-      { icon: "verified", label: "Verified" },
       { icon: "developer", label: "Developer" },
-      // { image: "assets/badges/custom.png", label: "Custom badge" },
+      { icon: "owner", label: "Owner" },
+      { icon: "premium", label: "Premium" },
+      // { id: "custom", image: "assets/badges/custom.png", label: "My badge" },
     ];
 
     const PROFILE = {
-      // Drop your files into jvbj/assets/. No build step needed.
-      nameFile: "assets/name.txt",
+      // Text settings go in jvbj/settings/; media goes in jvbj/assets/.
+      nameFile: "settings/name.txt",
+      biosFile: "settings/bios.txt",
+      badgesFile: "settings/badges.txt",
+      connectionsFile: "settings/connections.txt",
       fallbackName: "jvbj",
       avatar: "assets/avatar.png", // PNG, JPG, WEBP, GIF, or SVG
       backgroundVideo: "assets/background.mp4", // MP4 or WEBM; "" disables video
       backgroundImage: "assets/background.svg", // Fallback / image-only background
       audio: "", // Optional, e.g. "assets/audio.mp3"
 
-      bio: ["welcome to my page", "somewhere on the internet"],
+      // These defaults are used only if their settings files are unavailable.
+      bio: ["somewhere on the internet", "a really long paragraph blah blah blah\nblah blah blah"],
       typewriter: true,
       location: "", // Optional; leave empty to hide
       uid: "", // Optional tooltip on your name
@@ -49,32 +52,27 @@
       discord: {
         enabled: true,
         userId: "",
-        username: "", // Empty = use assets/name.txt
+        username: "", // Empty = use settings/name.txt
         avatar: "", // Empty = use the main avatar
         status: "offline", // online, idle, dnd, offline
         activity: "Offline",
         url: "", // Optional Discord profile / invite URL
       },
 
-      // Replace these platform homepages with your own profile URLs.
-      // You can also use { icon: "discord", label: "Discord", copy: "username" }.
+      // Fallback links if settings/connections.txt is unavailable.
       links: [
-        { icon: "discord", label: "Discord", url: "https://discord.com/" },
-        { icon: "github", label: "GitHub", url: "https://github.com/" },
-        { icon: "spotify", label: "Spotify", url: "https://open.spotify.com/" },
-        { icon: "youtube", label: "YouTube", url: "https://www.youtube.com/" },
-        { icon: "instagram", label: "Instagram", url: "https://www.instagram.com/" },
-        { icon: "globe", label: "Website", url: "https://onimai.site/" },
+        { icon: "github", label: "GitHub", url: "https://github.com/bsoding" },
+        { icon: "youtube", label: "YouTube", url: "https://www.youtube.com/@jvbjvbj" },
       ],
     };
   </script>
 
   <title>jvbj</title>
-  <meta name="description" content="welcome to my page">
+  <meta name="description" content="somewhere on the internet">
   <meta name="theme-color" content="#08090b">
   <meta property="og:type" content="profile">
   <meta property="og:title" content="jvbj">
-  <meta property="og:description" content="welcome to my page">
+  <meta property="og:description" content="somewhere on the internet">
   <link rel="icon" href="assets/avatar.png">
   <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&amp;display=swap">
   <link rel="stylesheet" href="style.css">
@@ -110,7 +108,7 @@
           <div id="badges" class="badges" aria-label="Profile badges"></div>
         </div>
 
-        <p id="bio" class="bio"><span id="bioText">welcome to my page</span><span id="typeCursor" class="type-cursor" aria-hidden="true">|</span></p>
+        <p id="bio" class="bio"><span id="bioText">somewhere on the internet</span><span id="typeCursor" class="type-cursor" aria-hidden="true">|</span></p>
         <p id="location" class="location" hidden></p>
 
         <div id="discordPresence" class="discord-presence" hidden>
