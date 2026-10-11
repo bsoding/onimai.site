@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#100617">
+  <title>404 | onimai.site</title>
+  <link rel="icon" href="/onimai.png">
+
+  <!-- Google Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@900&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      color-scheme: dark;
+      /* Colors sampled from onimai.png. */
+      --logo-blue: #0094ff;
+      --logo-purple: #57007f;
+      --logo-magenta: #7f006e;
+    }
+
+    body {
+      margin: 0;
+      background-color: #100617;
+      background-image: radial-gradient(ellipse at center, #2b0b3c, #100617 70%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      min-height: 100svh;
+    }
+
+    h1 {
+      font-size: 20vw;
+      font-family: 'Montserrat', 'Arial Black', sans-serif;
+      font-weight: 900;
+      line-height: 1;
+      margin: 0;
+      color: var(--logo-blue);
+
+      /* Lighter shades keep the logo's purple and magenta legible. */
+      background: linear-gradient(180deg, var(--logo-blue) 20%, #a369b9 55%, #b366a8 85%);
+      background: linear-gradient(180deg,
+        var(--logo-blue) 20%,
+        color-mix(in srgb, var(--logo-purple) 55%, white) 55%,
+        color-mix(in srgb, var(--logo-magenta) 60%, white) 85%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+  </style>
+</head>
+<body>
+  <h1>404</h1>
+</body>
+</html>
