@@ -12,7 +12,7 @@ After committing and pushing, the profile is available at **https://onimai.site/
 
 Edit the files inside the copied folder's `settings/` directory:
 
-- `names.txt`: separate names with a blank line. Multiple names cycle through the typewriter.
+- `names.txt`: put one name per line; blank lines are ignored. The typewriter shows one name at a time.
 - `bios.txt`: separate bios with a blank line. Names and bios animate independently.
 - `badges.txt`: one badge name per line, such as `developer` or `premium`. It starts blank for no badges.
 - `connections.txt`: fill in the platforms you want, such as `GITHUB=yourusername`. Every supported platform is listed; blank values stay hidden.

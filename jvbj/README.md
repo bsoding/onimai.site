@@ -8,11 +8,10 @@ Edit the plain UTF-8 files in **`jvbj/settings/`**. They are fetched without the
 
 ### `settings/names.txt`
 
-Separate names with a **blank line**, just like bios. After the visitor enters, the typewriter types, erases, and loops through them in file order, independently of the bio animation. A single name types once and stays visible. Line breaks inside an entry are preserved.
+Put **one name per line**. Blank lines are ignored. After the visitor enters, the typewriter shows one name at a time, erasing it before typing the next name in file order, independently of the bio animation. A single name types once and stays visible.
 
 ```text
 jvbj
-
 your other name
 ```
 

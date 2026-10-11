@@ -297,7 +297,7 @@
       readSetting(PROFILE.badgesFile), readSetting(PROFILE.connectionsFile),
     ]);
     if (namesText !== null) {
-      names = settingParagraphs(namesText);
+      names = namesText.split("\n").map((name) => name.trim()).filter(Boolean);
       if (!names.length) names = [PROFILE.fallbackName || "jvbj"];
       setName(names[0]);
     }
