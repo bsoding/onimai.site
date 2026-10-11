@@ -26,10 +26,10 @@
       badgesFile: "settings/badges.txt",
       connectionsFile: "settings/connections.txt",
       fallbackName: "jvbj",
-      avatar: "assets/avatar.png", // PNG, JPG, WEBP, GIF, or SVG
+      avatar: "assets/profile.png", // PNG, JPG, WEBP, GIF, or SVG
       backgroundVideo: "assets/background.mp4", // MP4 or WEBM; "" disables video
       backgroundImage: "assets/background.svg", // Fallback / image-only background
-      audio: "", // Optional, e.g. "assets/audio.mp3"
+      audio: "assets/background_music.mp3", // "" disables music
 
       // These defaults are used only if their settings files are unavailable.
       bio: ["somewhere on the internet", "a really long paragraph blah blah blah\nblah blah blah"],
@@ -72,7 +72,7 @@
   <meta property="og:type" content="profile">
   <meta property="og:title" content="jvbj">
   <meta property="og:description" content="somewhere on the internet">
-  <link rel="icon" href="assets/avatar.png">
+  <link rel="icon" href="assets/profile.png">
   <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&amp;display=swap">
   <link rel="stylesheet" href="style.css">
   <script src="profile.js" defer></script>
@@ -100,7 +100,7 @@
 
     <main class="profile-stage">
       <article id="profileCard" class="profile-card" aria-label="Bio profile">
-        <img id="avatar" class="avatar" src="assets/avatar.png" alt="Profile picture" width="120" height="120" fetchpriority="high">
+        <img id="avatar" class="avatar" src="assets/profile.png" alt="Profile picture" width="120" height="120" fetchpriority="high">
 
         <div class="identity">
           <h1 id="displayName" class="display-name">jvbj</h1>
@@ -112,7 +112,7 @@
 
         <div id="discordPresence" class="discord-presence" hidden>
           <div class="discord-avatar-wrap">
-            <img id="discordAvatar" class="discord-avatar" src="assets/avatar.png" alt="" width="56" height="56">
+            <img id="discordAvatar" class="discord-avatar" src="assets/profile.png" alt="" width="56" height="56">
             <span id="discordStatus" class="status-dot offline" role="img" aria-label="Offline"></span>
           </div>
           <div class="discord-info">

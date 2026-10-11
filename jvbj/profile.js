@@ -326,7 +326,7 @@
     $("discordPresence").hidden = !config?.enabled;
     if (!config?.enabled) return;
     $("discordUsername").textContent = config.username || displayName;
-    $("discordAvatar").src = safeURL(config.avatar || PROFILE.avatar) || "assets/avatar.png";
+    $("discordAvatar").src = safeURL(config.avatar || PROFILE.avatar) || "assets/profile.png";
     $("discordLogo").innerHTML = icons.discord;
     setPresence(config.status, config.activity);
     const url = safeURL(config.url || (/^\d{17,20}$/.test(config.userId || "") ? `https://discord.com/users/${config.userId}` : ""));
@@ -401,7 +401,7 @@
   root.style.setProperty("--card-blur", `${Math.max(0, Number(PROFILE.cardBlur) || 0)}px`);
   root.style.setProperty("--card-radius", `${Math.max(0, Number(PROFILE.cardRadius) || 0)}px`);
   $("enterText").textContent = PROFILE.enterText || "click to enter...";
-  $("avatar").src = safeURL(PROFILE.avatar) || "assets/avatar.png";
+  $("avatar").src = safeURL(PROFILE.avatar) || "assets/profile.png";
   document.querySelector('link[rel="icon"]').href = $("avatar").src;
   for (const id of ["avatar", "discordAvatar"]) $(id).addEventListener("error", (event) => { event.currentTarget.src = "assets/avatar.svg"; }, { once: true });
   const imageURL = safeURL(PROFILE.backgroundImage);

@@ -91,12 +91,12 @@ Blank lines and lines beginning with `#` are ignored in badges and connections. 
 
 ## Picture and background
 
-- **Profile picture:** replace `assets/avatar.png`. Use the same filename, or change `PROFILE.avatar` near the top of `index.html` to another image inside `assets/`. PNG, JPG, WEBP, GIF, and SVG work.
+- **Profile picture:** replace `assets/profile.png`. Use the same filename, or change `PROFILE.avatar` near the top of `index.html` to another image inside `assets/`. PNG, JPG, WEBP, GIF, and SVG work. The favicon uses the same picture.
 - **Background video:** replace `assets/background.mp4`. MP4 with H.264 video is broadly supported. For WEBM, change `PROFILE.backgroundVideo` to `assets/background.webm`. Videos loop, fill the viewport, and begin after the visitor enters. Video audio uses the volume control too.
 - **Image background / video fallback:** replace `assets/background.svg` or point `PROFILE.backgroundImage` to an image in `assets/`. Set `backgroundVideo: ""` for an image-only page. If the video is missing or unsupported, the fallback image remains visible.
-- **Optional music:** add `assets/audio.mp3` and set `PROFILE.audio` to that path. The provided example video is silent. Music starts only after the visitor enters.
+- **Music:** replace `assets/background_music.mp3`. It is enabled in `PROFILE.audio`, loops after the visitor clicks to enter, and uses the mute and volume controls. Set `PROFILE.audio` to `""` to disable music. The background video has no audio track.
 
-The included forest video and default avatar were created for this template. Replace them with your own media. After pushing replacements, allow GitHub Pages to finish deploying; an already open profile needs to be refreshed.
+The active profile picture, video, and music were imported from `bsoding/onimai.site2`. `assets/avatar.svg` is the picture error fallback, and `assets/background.svg` is the video poster and image fallback. Unused imported media and icons have been removed; built-in badges and connections use inline SVG icons. After pushing replacements, allow GitHub Pages to finish deploying; an already open profile needs to be refreshed.
 
 ## Other settings
 
