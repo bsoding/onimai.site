@@ -70,6 +70,31 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
             await self.bot.accept_text(self.session.id,123,"names","")
         self.assertEqual(self.bot.store.get(self.session.id).phase,"names")
 
+    async def test_maximum_bios_and_emoji_aliases_fit_discord_embed_limits(self):
+        names=["*"+str(n)+"🐈"*78 for n in range(10)]
+        bios=["*"*598 for _ in range(3)]
+        session=self.bot.store.update(self.session.id,phase="review",names=names,bios=bios)
+        await self.bot.send_prompt(session)
+        embed=self.channel.send.call_args.kwargs["embed"]
+        units=lambda value:len(value.encode("utf-16-le"))//2
+        self.assertLessEqual(units(embed.description),4096)
+        self.assertTrue(all(units(field.value)<=1024 for field in embed.fields))
+        self.assertIn("\\*"*598,embed.description)
+        self.assertLessEqual(units(embed.description)+sum(units(f.value)+units(f.name) for f in embed.fields)+units(embed.title)+units(embed.footer.text),6000)
+
+    async def test_restart_reads_replies_only_after_latest_edit_prompt(self):
+        self.bot.store.update(self.session.id,prompt_id=2000,last_message_id=1900)
+        self.bot.get_guild=Mock(return_value=SimpleNamespace(id=456))
+        self.bot.get_category=AsyncMock()
+        async def empty_history(**kwargs):
+            if False:
+                yield None
+        self.channel.history=Mock(side_effect=empty_history)
+        self.channel.fetch_message=AsyncMock(return_value=SimpleNamespace(id=2000))
+        await self.bot.recover()
+        self.assertEqual(self.channel.history.call_args.kwargs["after"].id,2000)
+        self.channel.fetch_message.assert_awaited_once_with(2000)
+
     async def test_repeat_create_returns_same_private_channel(self):
         interaction = Mock()
         interaction.guild_id, interaction.user.id = 456,123
@@ -98,6 +123,20 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(interaction.guild.create_text_channel.call_args.args[0],"create-2-999")
         self.assertIn("<#777>",interaction.edit_original_response.call_args.kwargs["content"])
         interaction.response.defer.assert_awaited_once_with(ephemeral=True,thinking=True)
+
+    async def test_first_prompt_does_not_wait_for_gateway_channel_cache(self):
+        self.bot.get_channel=Mock(return_value=None)
+        self.bot.fetch_channel=AsyncMock(side_effect=AssertionError("New channel was already returned by Discord"))
+        interaction=Mock()
+        interaction.guild_id,interaction.user.id=456,999
+        interaction.response.defer=AsyncMock()
+        interaction.edit_original_response=AsyncMock()
+        interaction.guild.create_text_channel=AsyncMock(return_value=self.channel)
+        self.bot.get_category=AsyncMock(return_value=SimpleNamespace(channels=[]))
+        await self.bot.create_page(interaction,"uncached")
+        self.assertEqual(self.channel.send.call_args.kwargs["content"],"Please type your names/aliases for your page (one per line).")
+        self.assertIn("<#777>",interaction.edit_original_response.call_args.kwargs["content"])
+        self.bot.fetch_channel.assert_not_awaited()
 
     async def test_fourth_published_page_stops_before_channel_or_github_mutations(self):
         self.bot.store.update(self.session.id,phase="published")

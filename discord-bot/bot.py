@@ -24,6 +24,15 @@ def required(name: str) -> str:
     return value
 
 
+def preview_names(names: list[str]) -> str:
+    value = discord.utils.escape_markdown("\n".join(names))
+    # Discord counts UTF-16 units. Keep long emoji aliases inside its field limit.
+    encoded = value.encode("utf-16-le")
+    if len(encoded) > 2048:
+        return encoded[:2046].decode("utf-16-le", errors="ignore") + "…"
+    return value or "—"
+
+
 class TextModal(discord.ui.Modal):
     def __init__(self, bot: BioBot, session: Session, field: str):
         super().__init__(title="Your names / aliases" if field == "names" else "Your bio", timeout=600)
@@ -190,15 +199,22 @@ class BioBot(discord.Client):
             async with self.user_lock(interaction.user.id):
                 active = self.store.active_for_user(interaction.user.id)
                 if active:
+                    active_channel = self.get_channel(active.channel_id) if active.channel_id else None
                     if active.phase == "creating" and not active.channel_id:
                         channels = await interaction.guild.fetch_channels()
                         recovered_channel = next((c for c in channels if isinstance(c, discord.TextChannel) and (c.topic or "").startswith(f"onimai-bot session:{active.id} |")), None)
                         if recovered_channel:
                             active = self.store.update(active.id, phase="names", channel_id=recovered_channel.id)
-                            await self.send_prompt(active)
-                    if active.channel_id and self.get_channel(active.channel_id):
+                            active_channel = recovered_channel
+                            await self.send_prompt(active, active_channel)
+                    if active.channel_id and active_channel is None:
+                        try:
+                            active_channel = await self.fetch_channel(active.channel_id)
+                        except discord.NotFound:
+                            pass
+                    if active_channel:
                         if not active.prompt_id:
-                            await self.send_prompt(active)
+                            await self.send_prompt(active, active_channel)
                         await interaction.edit_original_response(content=f"Continue your current page in <#{active.channel_id}>. Finish or cancel it before starting another.")
                         return
                     if active.phase == "publishing":
@@ -218,7 +234,7 @@ class BioBot(discord.Client):
                 }
                 channel = await interaction.guild.create_text_channel(f"create-{session.id}-{session.user_id}", category=category, overwrites=overwrites, topic=f"onimai-bot session:{session.id} | {self.site}/{endpoint}", reason="Onimai /create private page wizard")
                 session = self.store.update(session.id, channel_id=channel.id, phase="names")
-                await self.send_prompt(session)
+                await self.send_prompt(session, channel)
                 await interaction.edit_original_response(content=f"Let's create **{self.site}/{endpoint}**. Continue in {channel.mention}.")
         except UserError as exc:
             await interaction.edit_original_response(content=str(exc))
@@ -243,10 +259,13 @@ class BioBot(discord.Client):
         except (discord.NotFound, discord.Forbidden):
             pass
 
-    async def send_prompt(self, session: Session):
-        channel = self.get_channel(session.channel_id)
+    async def send_prompt(self, session: Session, channel=None):
+        channel = channel or self.get_channel(session.channel_id)
         if channel is None:
-            raise UserError("The creation channel is unavailable.")
+            try:
+                channel = await self.fetch_channel(session.channel_id)
+            except discord.NotFound:
+                raise UserError("The creation channel is unavailable.") from None
         view = WizardView(self, session)
         file = None
         if session.phase == "names":
@@ -261,9 +280,10 @@ class BioBot(discord.Client):
             embed.set_image(url="attachment://bio.png")
         else:
             content = "Review your page, then click Publish page." if session.phase == "review" else "Publishing is waiting for a retry. Your draft and page slot are saved."
-            embed = discord.Embed(title=f"onimai.site/{session.endpoint}", description="Names and bios will rotate independently. Your page uses the site's default avatar and background. Badges start empty and are added by the site owner.", color=0xA369B9)
-            embed.add_field(name="Names / aliases", value=discord.utils.escape_markdown("\n".join(session.names))[:1024] or "—", inline=False)
-            embed.add_field(name="Bio", value=discord.utils.escape_markdown("\n\n".join(session.bios))[:2200] or "—", inline=False)
+            bio_preview = discord.utils.escape_markdown("\n\n".join(session.bios)) or "—"
+            description = "Names and bios will rotate independently. Your page uses the site's default avatar and background. Badges start empty and are added by the site owner.\n\n**Bio**\n" + bio_preview
+            embed = discord.Embed(title=f"onimai.site/{session.endpoint}", description=description, color=0xA369B9)
+            embed.add_field(name="Names / aliases", value=preview_names(session.names), inline=False)
         embed.set_footer(text="Only you and server administrators can see this creation channel.")
         kwargs = {"content":content,"embed":embed,"view":view}
         if file:
@@ -387,7 +407,8 @@ class BioBot(discord.Client):
                         self.store.cancel(session.id)
                         continue
                     if session.phase in ("names","bio"):
-                        after = discord.Object(id=session.last_message_id or session.prompt_id) if session.last_message_id or session.prompt_id else discord.utils.parse_time(session.created_at)
+                        after_id = max(session.last_message_id or 0, session.prompt_id or 0)
+                        after = discord.Object(id=after_id) if after_id else discord.utils.parse_time(session.created_at)
                         async for message in channel.history(limit=100, after=after, oldest_first=True):
                             current = self.store.get(session.id)
                             if current.phase not in ("names","bio"):
@@ -431,7 +452,6 @@ class BioBot(discord.Client):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    discord.utils.setup_logging(level=logging.INFO, root=False)
     bot = BioBot()
     try:
         bot.run(required("DISCORD_TOKEN"), log_handler=None)
