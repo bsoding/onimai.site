@@ -1,0 +1,35 @@
+[Unit]
+Description=Onimai Discord bio page creator
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=onimai-bot
+Group=onimai-bot
+WorkingDirectory=/opt/onimai-bot
+EnvironmentFile=/etc/onimai-bot/environment
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/onimai-bot/.venv/bin/python /opt/onimai-bot/bot.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+StateDirectory=onimai-bot
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/onimai-bot
+
+[Install]
+WantedBy=multi-user.target
