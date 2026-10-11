@@ -61,14 +61,15 @@
 
   let badges = BADGES;
   let connections = PROFILE.links || [];
+  let names = [PROFILE.fallbackName || "jvbj"];
   let bios = (Array.isArray(PROFILE.bio) ? PROFILE.bio : [PROFILE.bio]).map((text) => String(text || "")).filter(Boolean);
 
-  let displayName = PROFILE.fallbackName || "jvbj";
+  let displayName = names[0];
   let entered = false;
   let motionPaused = reducedMotion.matches;
   let muted = !!PROFILE.startMuted;
   let volume = Math.max(0, Math.min(1, Number(PROFILE.volume) || 0));
-  let typeTimer;
+  let stopTyping = () => {};
   let presenceTimer;
   let presenceController;
   let toastTimer;
@@ -157,7 +158,8 @@
 
   function setName(name) {
     displayName = name;
-    $("displayName").textContent = name;
+    $("nameText").textContent = name;
+    $("nameCursor").hidden = !PROFILE.typewriter || reducedMotion.matches;
     $("avatar").alt = `${name}'s profile picture`;
     document.title = `@${name}`;
     document.querySelector('meta[property="og:title"]').content = name;
@@ -178,6 +180,10 @@
 
   function settingLines(text) {
     return text.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+  }
+
+  function settingParagraphs(text) {
+    return text.split(/\n[\t ]*\n(?:[\t ]*\n)*/).map((entry) => entry.trim()).filter(Boolean);
   }
 
   function parseBadges(text) {
@@ -228,61 +234,70 @@
     $("typeCursor").hidden = !PROFILE.typewriter || reducedMotion.matches || !bios.length;
     document.querySelector('meta[name="description"]').content = bios[0] || displayName;
     document.querySelector('meta[property="og:description"]').content = bios[0] || displayName;
-    if (entered) startTypewriter();
   }
 
   async function loadSettings() {
-    const [nameText, biosText, badgesText, connectionsText] = await Promise.all([
-      readSetting(PROFILE.nameFile), readSetting(PROFILE.biosFile),
+    const [namesText, biosText, badgesText, connectionsText] = await Promise.all([
+      readSetting(PROFILE.namesFile), readSetting(PROFILE.biosFile),
       readSetting(PROFILE.badgesFile), readSetting(PROFILE.connectionsFile),
     ]);
-    if (nameText !== null) {
-      const name = nameText.trim().split("\n")[0].trim();
-      if (name) setName(name);
+    if (namesText !== null) {
+      names = settingParagraphs(namesText);
+      if (!names.length) names = [PROFILE.fallbackName || "jvbj"];
+      setName(names[0]);
     }
-    if (biosText !== null) bios = biosText.split(/\n[\t ]*\n(?:[\t ]*\n)*/).map((bio) => bio.trim()).filter(Boolean);
+    if (biosText !== null) bios = settingParagraphs(biosText);
     // A present, empty file is intentional: it clears that section.
     if (badgesText !== null) badges = parseBadges(badgesText);
     if (connectionsText !== null) connections = parseConnections(connectionsText);
     renderBio();
     renderBadges();
     renderLinks();
+    if (entered) startTypewriters();
   }
 
-  function startTypewriter() {
-    clearTimeout(typeTimer);
-    $("bio").removeAttribute("aria-label");
-    $("bioText").removeAttribute("aria-hidden");
-    $("typeCursor").hidden = !PROFILE.typewriter || reducedMotion.matches || !bios.length;
-    if (!PROFILE.typewriter || reducedMotion.matches || !bios.length) {
-      $("bioText").textContent = bios[0] || "";
-      return;
+  function typewrite(container, text, cursor, entries) {
+    let timer;
+    container.removeAttribute("aria-label");
+    text.removeAttribute("aria-hidden");
+    cursor.hidden = !PROFILE.typewriter || reducedMotion.matches || !entries.length;
+    if (!PROFILE.typewriter || reducedMotion.matches || !entries.length) {
+      text.textContent = entries[0] || "";
+      return () => {};
     }
-    $("bio").setAttribute("aria-label", bios.join("\n\n"));
-    $("bioText").setAttribute("aria-hidden", "true");
+    container.setAttribute("aria-label", entries.join("\n\n"));
+    text.setAttribute("aria-hidden", "true");
     let index = 0;
-    let chars = Array.from(bios[index]);
+    let chars = Array.from(entries[index]);
     let length = 0;
     let deleting = false;
     function tick() {
-      if (document.hidden) { typeTimer = setTimeout(tick, 500); return; }
+      if (document.hidden) { timer = setTimeout(tick, 500); return; }
       length += deleting ? -1 : 1;
-      $("bioText").textContent = chars.slice(0, length).join("");
+      text.textContent = chars.slice(0, length).join("");
       let delay = deleting ? 45 : 90;
       if (!deleting && length === chars.length) {
-        if (bios.length === 1) return;
+        if (entries.length === 1) return;
         deleting = true;
         delay = 2200;
       } else if (deleting && length === 0) {
         deleting = false;
-        index = (index + 1) % bios.length;
-        chars = Array.from(bios[index]);
+        index = (index + 1) % entries.length;
+        chars = Array.from(entries[index]);
         delay = 350;
       }
-      typeTimer = setTimeout(tick, delay);
+      timer = setTimeout(tick, delay);
     }
-    $("bioText").textContent = "";
+    text.textContent = "";
     tick();
+    return () => clearTimeout(timer);
+  }
+
+  function startTypewriters() {
+    stopTyping();
+    const stopName = typewrite($("displayName"), $("nameText"), $("nameCursor"), names);
+    const stopBio = typewrite($("bio"), $("bioText"), $("typeCursor"), bios);
+    stopTyping = () => { stopName(); stopBio(); };
   }
 
   function setPresence(status, activity) {
@@ -389,7 +404,7 @@
     updateVolume();
     updateMotion();
     if (PROFILE.audio && audio.getAttribute("src")) playMedia(audio);
-    startTypewriter();
+    startTypewriters();
     const name = $("displayName");
     name.tabIndex = -1;
     name.focus({ preventScroll: true });
@@ -456,16 +471,16 @@
     updateMotion();
     $("particles").replaceChildren();
     makeParticles();
-    if (entered) startTypewriter();
+    if (entered) startTypewriters();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) { video.pause(); audio.pause(); }
     else if (entered) { updateMotion(); if (audioURL) playMedia(audio); refreshPresence(); }
   });
-  window.addEventListener("pagehide", () => { clearTimeout(typeTimer); clearInterval(presenceTimer); presenceController?.abort(); });
+  window.addEventListener("pagehide", () => { stopTyping(); clearInterval(presenceTimer); presenceController?.abort(); });
   window.addEventListener("pageshow", (event) => {
     if (!event.persisted) return;
-    if (entered) { updateMotion(); startTypewriter(); if (audioURL) playMedia(audio); }
+    if (entered) { updateMotion(); startTypewriters(); if (audioURL) playMedia(audio); }
     refreshPresence();
     if (PROFILE.discord?.enabled && /^\d{17,20}$/.test(PROFILE.discord.userId || "")) presenceTimer = setInterval(refreshPresence, 30000);
   });

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <!-- ==============================================================
-       EDIT YOUR PROFILE IN settings/name.txt, settings/bios.txt,
+       EDIT YOUR PROFILE IN settings/names.txt, settings/bios.txt,
        settings/badges.txt, and settings/connections.txt.
        Put one badge name per line; a blank badges.txt hides all badges.
        Optional custom badge definitions live below. Add their id to
@@ -21,7 +21,7 @@
 
     const PROFILE = {
       // Text settings go in jvbj/settings/; media goes in jvbj/assets/.
-      nameFile: "settings/name.txt",
+      namesFile: "settings/names.txt",
       biosFile: "settings/bios.txt",
       badgesFile: "settings/badges.txt",
       connectionsFile: "settings/connections.txt",
@@ -51,7 +51,7 @@
       discord: {
         enabled: false,
         userId: "",
-        username: "", // Empty = use settings/name.txt
+        username: "", // Empty = use the first name in settings/names.txt
         avatar: "", // Empty = use the main avatar
         status: "offline", // online, idle, dnd, offline
         activity: "Offline",
@@ -74,8 +74,8 @@
   <meta property="og:description" content="somewhere on the internet">
   <link rel="icon" href="assets/profile.png">
   <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&amp;display=swap">
-  <link rel="stylesheet" href="style.css">
-  <script src="profile.js" defer></script>
+  <link rel="stylesheet" href="style.css?v=names">
+  <script src="profile.js?v=names" defer></script>
 </head>
 <body>
   <div class="background" aria-hidden="true">
@@ -103,7 +103,7 @@
         <img id="avatar" class="avatar" src="assets/profile.png" alt="Profile picture" width="120" height="120" fetchpriority="high">
 
         <div class="identity">
-          <h1 id="displayName" class="display-name">jvbj</h1>
+          <h1 id="displayName" class="display-name"><span id="nameText">jvbj</span><span id="nameCursor" class="type-cursor" aria-hidden="true" hidden>|</span></h1>
           <div id="badges" class="badges" aria-label="Profile badges"></div>
         </div>
 

@@ -4,15 +4,19 @@ Static guns.lol default-layout replica for **https://onimai.site/jvbj/**. There 
 
 ## Text settings
 
-Edit the plain UTF-8 files in **`jvbj/settings/`**. They are fetched without the browser cache each time the page loads. After pushing changes, allow GitHub Pages to deploy, then refresh the profile. No HTML edits are needed for the name, bios, built-in badges, or connections.
+Edit the plain UTF-8 files in **`jvbj/settings/`**. They are fetched without the browser cache each time the page loads. After pushing changes, allow GitHub Pages to deploy, then refresh the profile. No HTML edits are needed for the names, bios, built-in badges, or connections.
 
-### `settings/name.txt`
+### `settings/names.txt`
 
-The first line becomes the display name, browser title, and default Discord card name:
+Separate names with a **blank line**, just like bios. After the visitor enters, the typewriter types, erases, and loops through them in file order, independently of the bio animation. A single name types once and stays visible. Line breaks inside an entry are preserved.
 
 ```text
 jvbj
+
+your other name
 ```
+
+The first name is used for the browser title, image description, link-preview title, and default Discord card name. An empty or missing file uses `PROFILE.fallbackName`. With reduced motion or `PROFILE.typewriter: false`, the first name and bio stay visible without animation.
 
 ### `settings/bios.txt`
 
@@ -87,7 +91,7 @@ EMAIL=you@example.com
 
 Supported platforms: `GITHUB`, `YOUTUBE`, `INSTAGRAM`, `SPOTIFY`, `TWITCH`, `TIKTOK`, `X` / `TWITTER`, `TELEGRAM`, `DISCORD`, `WEBSITE`, `EMAIL` / `MAIL`. `TWITTER` is an alias of `X`, and `MAIL` is an alias of `EMAIL`; fill in whichever name you prefer. YouTube handles use `/@handle`; Spotify handles use `/user/handle`. Discord usernames are copied when clicked, numeric Discord user IDs open that profile, and full Discord invite URLs open the invite. Website values accept a domain or full URL. Email values create a mail link.
 
-Blank lines and lines beginning with `#` are ignored in badges and connections. Windows line endings and UTF-8 BOMs are supported. If a settings file is missing or cannot be fetched, its HTML defaults are used; an existing empty file clears the corresponding section (an empty name uses the fallback name).
+Blank lines and lines beginning with `#` are ignored in badges and connections. Windows line endings and UTF-8 BOMs are supported. If a settings file is missing or cannot be fetched, its HTML defaults are used; an existing empty file clears the corresponding section (an empty names file uses the fallback name).
 
 ## Picture and background
 
