@@ -178,6 +178,61 @@
     finally { clearTimeout(timeout); }
   }
 
+  function renderMemberSince(value) {
+    if (typeof value !== "string") return false;
+    const iso = value.slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+    const date = new Date(`${iso}T00:00:00Z`);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== iso) return false;
+    $("memberSinceDate").dateTime = iso;
+    $("memberSinceDate").textContent = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
+    }).format(date);
+    $("memberSince").hidden = false;
+    return true;
+  }
+
+  async function loadMemberSince() {
+    if (!$("memberSince") || !$("memberSinceDate")) return;
+    const config = PROFILE.membership;
+    if (!config || !/^[\w.-]+\/[\w.-]+$/.test(config.repository || "")) return;
+    let parts;
+    try { parts = decodeURIComponent(new URL("index.html", document.baseURI).pathname).split("/").filter(Boolean); }
+    catch { return; }
+    // GitHub project sites include the repository name before the profile folder.
+    if (location.hostname.endsWith(".github.io") && parts[0] === config.repository.split("/")[1]) parts.shift();
+    const folder = parts.at(-2);
+    const path = parts.join("/");
+    if (renderMemberSince(config.dates?.[folder])) return;
+    const cacheKey = `member-since:v1:${config.repository}:${config.branch || "main"}:${path}`;
+    try { if (renderMemberSince(localStorage.getItem(cacheKey))) return; } catch { /* Storage is optional. */ }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const url = new URL(`https://api.github.com/repos/${config.repository}/commits`);
+      url.search = new URLSearchParams({ path, sha: config.branch || "main", per_page: "1" });
+      const options = { signal: controller.signal, headers: { Accept: "application/vnd.github+json" } };
+      const latest = await fetch(url, options);
+      if (!latest.ok) return;
+      let commits = await latest.json();
+      const lastPage = latest.headers.get("link")?.match(/<([^>]+)>;\s*rel="last"/);
+      if (lastPage) {
+        const lastURL = new URL(lastPage[1]);
+        if (lastURL.origin !== url.origin) return;
+        const oldest = await fetch(lastURL, options);
+        if (!oldest.ok) return;
+        commits = await oldest.json();
+      }
+      if (!Array.isArray(commits) || !commits.length) return;
+      const date = commits[0]?.commit?.committer?.date || commits[0]?.commit?.author?.date;
+      if (renderMemberSince(date)) {
+        try { localStorage.setItem(cacheKey, date.slice(0, 10)); } catch { /* Storage is optional. */ }
+      }
+    } catch { /* Keep the date hidden until a real creation date is available. */ }
+    finally { clearTimeout(timeout); }
+  }
+
   function settingLines(text) {
     return text.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
   }
@@ -446,6 +501,7 @@
   renderLinks();
   renderDiscord();
   loadSettings();
+  loadMemberSince();
   makeParticles();
   // Keep all media muted until the visitor's entry gesture.
   $("muteButton").innerHTML = icons.volume;
@@ -480,6 +536,7 @@
   window.addEventListener("pagehide", () => { stopTyping(); clearInterval(presenceTimer); presenceController?.abort(); });
   window.addEventListener("pageshow", (event) => {
     if (!event.persisted) return;
+    loadMemberSince();
     if (entered) { updateMotion(); startTypewriters(); if (audioURL) playMedia(audio); }
     refreshPresence();
     if (PROFILE.discord?.enabled && /^\d{17,20}$/.test(PROFILE.discord.userId || "")) presenceTimer = setInterval(refreshPresence, 30000);

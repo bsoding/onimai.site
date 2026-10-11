@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- ==============================================================
+       EDIT YOUR PROFILE IN settings/names.txt, settings/bios.txt,
+       settings/badges.txt, and settings/connections.txt.
+       Put one badge name per line; a blank badges.txt hides all badges.
+       Optional custom badge definitions live below. Add their id to
+       badges.txt, e.g. custom. Color and URL are optional.
+       ============================================================== -->
+  <script>
+    const BADGES = [
+      // { id: "custom", image: "assets/badges/custom.png", label: "My badge" },
+    ];
+
+    const PROFILE = {
+      // Text settings go in settings/; media goes in assets/.
+      namesFile: "settings/names.txt",
+      biosFile: "settings/bios.txt",
+      badgesFile: "settings/badges.txt",
+      connectionsFile: "settings/connections.txt",
+      fallbackName: "example",
+      avatar: "assets/profile.png", // PNG, JPG, WEBP, GIF, or SVG
+      backgroundVideo: "assets/background.mp4", // MP4 or WEBM; "" disables video
+      backgroundImage: "assets/background.svg", // Fallback / image-only background
+      audio: "", // Add assets/background_music.mp3 and set its path here to enable music
+
+      // These defaults are used only if their settings files are unavailable.
+      bio: ["somewhere on the internet", "your bio goes here"],
+      typewriter: true,
+      location: "", // Optional; leave empty to hide
+      uid: "", // Optional tooltip on your name
+      views: 0, // Editable display value; null hides it. See README for analytics.
+      membership: {
+        repository: "bsoding/onimai.site",
+        branch: "main",
+        dates: { jvbj: "2026-01-17" }, // Folder-specific overrides; other users use GitHub history.
+      },
+      enterText: "click to enter...",
+      volume: 0.35,
+      startMuted: false,
+      accent: "#fafafa",
+      cardOpacity: 0.48,
+      cardBlur: 14,
+      cardRadius: 20,
+      particles: true,
+      tilt: true,
+
+      // Discord presence is hidden for now. Configure and enable it later.
+      discord: {
+        enabled: false,
+        userId: "",
+        username: "", // Empty = use the first name in settings/names.txt
+        avatar: "", // Empty = use the main avatar
+        status: "offline", // online, idle, dnd, offline
+        activity: "Offline",
+        url: "", // Optional Discord profile / invite URL
+      },
+
+      // Fallback links if settings/connections.txt is unavailable.
+      links: [],
+    };
+  </script>
+
+  <title>example</title>
+  <meta name="description" content="somewhere on the internet">
+  <meta name="theme-color" content="#08090b">
+  <meta property="og:type" content="profile">
+  <meta property="og:title" content="example">
+  <meta property="og:description" content="somewhere on the internet">
+  <link rel="icon" href="assets/profile.png">
+  <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&amp;display=swap">
+  <link rel="stylesheet" href="style.css?v=membership">
+  <script src="profile.js?v=membership" defer></script>
+</head>
+<body>
+  <div class="background" aria-hidden="true">
+    <div id="backgroundImage" class="background-image"></div>
+    <video id="backgroundVideo" class="background-video" muted loop playsinline preload="auto" poster="assets/background.svg"></video>
+    <div class="background-shade"></div>
+    <div id="particles" class="particles"></div>
+  </div>
+
+  <button id="entryGate" class="entry-gate" type="button" autofocus>
+    <span id="enterText">click to enter...</span>
+  </button>
+
+  <div id="page" class="page" inert aria-hidden="true">
+    <div class="volume-control">
+      <button id="muteButton" class="control-button" type="button" aria-label="Mute audio" aria-pressed="false"></button>
+      <div class="volume-slider">
+        <input id="volume" type="range" min="0" max="100" value="35" aria-label="Audio volume">
+      </div>
+    </div>
+    <button id="motionButton" class="control-button motion-button" type="button" aria-label="Pause background" aria-pressed="false"></button>
+
+    <main class="profile-stage">
+      <article id="profileCard" class="profile-card" aria-label="Bio profile">
+        <img id="avatar" class="avatar" src="assets/profile.png" alt="Profile picture" width="120" height="120" fetchpriority="high">
+
+        <div class="identity">
+          <h1 id="displayName" class="display-name"><span id="nameText">example</span><span id="nameCursor" class="type-cursor" aria-hidden="true" hidden>|</span></h1>
+          <div id="badges" class="badges" aria-label="Profile badges"></div>
+        </div>
+
+        <p id="bio" class="bio"><span id="bioText">somewhere on the internet</span><span id="typeCursor" class="type-cursor" aria-hidden="true">|</span></p>
+        <p id="location" class="location" hidden></p>
+
+        <div id="discordPresence" class="discord-presence" hidden>
+          <div class="discord-avatar-wrap">
+            <img id="discordAvatar" class="discord-avatar" src="assets/profile.png" alt="" width="56" height="56">
+            <span id="discordStatus" class="status-dot offline" role="img" aria-label="Offline"></span>
+          </div>
+          <div class="discord-info">
+            <span id="discordUsername" class="discord-username">example</span>
+            <span id="discordActivity" class="discord-activity">Offline</span>
+          </div>
+          <span id="discordLogo" class="discord-logo" aria-hidden="true"></span>
+        </div>
+
+        <nav id="socialLinks" class="social-links" aria-label="Social links"></nav>
+
+        <footer class="profile-footer">
+          <div id="profileViews" class="profile-views" tabindex="0" data-tooltip="Profile views" aria-label="Profile views">
+            <span id="viewsIcon" aria-hidden="true"></span><span id="viewsCount">0</span>
+          </div>
+          <p id="memberSince" class="member-since" hidden>User since <time id="memberSinceDate"></time></p>
+        </footer>
+      </article>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <noscript><p class="noscript">Enable JavaScript to open this profile.</p></noscript>
+</body>
+</html>

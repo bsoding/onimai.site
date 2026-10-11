@@ -110,6 +110,16 @@ The view count is a manually configured display value (`PROFILE.views`), not a g
 
 The Discord presence card is hidden for now (`discord.enabled: false`). Its configuration remains in `PROFILE.discord` in `index.html` for future setup. `DISCORD=` is also blank in the connections file, so no Discord social icon appears.
 
+## Membership date
+
+Small text at the bottom of the card shows **User since 17 January 2026** for `jvbj`. This override is matched by the profile folder, so changing display names does not change the date.
+
+Other profiles automatically use the oldest GitHub commit for their own `index.html`, in the repository and branch configured under `PROFILE.membership`. Copying a profile into a new folder gives it that folder's first commit date; editing its names, bios, or HTML later does not reset it. Dates use UTC and are cached in the visitor's browser. If GitHub is unavailable or rate-limits an uncached lookup, the date stays hidden and is retried on a later visit.
+
+## Copy a new profile
+
+Use the self-contained **[`example/`](../example/README.md)** folder as the starting point. It includes neutral default media, names and bios that demonstrate the typewriter, a blank badge file, and every supported connection with an empty value. Copy it to a new folder, edit its text settings and media, then commit and push. Its membership date is detected automatically; no date or profile-path edits are needed.
+
 Keyboard entry, focusable tooltips, accessible audio controls, mobile layouts, and reduced-motion preferences are supported. The top-right button pauses the video and particles. Text names, bios, and labels are rendered as text, so special characters are safe.
 
 ## Preview

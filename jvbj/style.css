@@ -39,7 +39,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
 .profile-stage { min-height: 100svh; display: flex; align-items: center; justify-content: center; padding: 88px 20px; perspective: 1100px; }
 .profile-card {
   position: relative; display: flex; align-items: center; flex-direction: column; width: 100%; max-width: 44rem;
-  padding: 32px 26px 61px; border: 2px solid rgba(255, 255, 255, 0.055); border-radius: var(--card-radius);
+  padding: 32px 26px 23px; border: 2px solid rgba(255, 255, 255, 0.055); border-radius: var(--card-radius);
   background: rgba(10, 10, 12, var(--card-opacity)); backdrop-filter: blur(var(--card-blur)); -webkit-backdrop-filter: blur(var(--card-blur));
   transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)); transition: transform 0.22s ease-out;
 }
@@ -79,8 +79,10 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
 .social-link svg, .social-link img { display: block; width: 30px; height: 30px; object-fit: contain; filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.6)); }
 .social-link:hover { transform: translateY(-3px) scale(1.06); filter: brightness(1.15); }
 .social-link:active { transform: translateY(1px); }
-.profile-views { position: absolute; bottom: 23px; left: 25px; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; cursor: default; }
+.profile-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; width: 100%; min-height: 20px; margin-top: 24px; }
+.profile-views { position: relative; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; cursor: default; }
 .profile-views svg { width: 20px; height: 20px; display: block; }
+.member-since { margin: 0 0 0 auto; max-width: 100%; color: var(--muted); font-size: 12px; line-height: 1.5; font-weight: 400; text-align: right; }
 
 [data-tooltip]::after { position: absolute; content: attr(data-tooltip); bottom: calc(100% + 10px); left: 50%; z-index: 5; transform: translate(-50%, 4px); opacity: 0; visibility: hidden; pointer-events: none; width: max-content; max-width: 200px; padding: 6px 9px; border-radius: 7px; background: #18191d; border: 1px solid rgba(255, 255, 255, 0.1); color: #f5f5f5; font: 500 12px/1.4 "Satoshi", sans-serif; text-align: center; transition: opacity 0.16s, transform 0.16s, visibility 0.16s; }
 [data-tooltip]:hover::after, [data-tooltip]:focus-visible::after { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
@@ -106,12 +108,11 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
 
 @media (max-width: 600px) {
   .profile-stage { padding: 84px 16px; }
-  .profile-card { padding: 28px 20px 59px; }
+  .profile-card { padding: 28px 20px 21px; }
   .display-name { font-size: 32px; }
   .bio { font-size: 16px; }
   .volume-control { top: 16px; left: 16px; }
   .motion-button { top: 16px; right: 16px; }
-  .profile-views { bottom: 21px; left: 23px; }
 }
 @media (hover: none) { .volume-slider { width: 108px; opacity: 1; } }
 @media (max-width: 360px) { .social-links { gap: 11px; } .discord-presence { gap: 10px; padding: 12px; } .discord-logo { display: none; } }

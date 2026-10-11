@@ -37,6 +37,11 @@
       location: "", // Optional; leave empty to hide
       uid: "", // Optional tooltip on your name
       views: 0, // Editable display value; null hides it. See README for analytics.
+      membership: {
+        repository: "bsoding/onimai.site",
+        branch: "main",
+        dates: { jvbj: "2026-01-17" }, // Folder-specific overrides; other users use GitHub history.
+      },
       enterText: "click to enter...",
       volume: 0.35,
       startMuted: false,
@@ -74,8 +79,8 @@
   <meta property="og:description" content="somewhere on the internet">
   <link rel="icon" href="assets/profile.png">
   <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&amp;display=swap">
-  <link rel="stylesheet" href="style.css?v=names">
-  <script src="profile.js?v=names" defer></script>
+  <link rel="stylesheet" href="style.css?v=membership">
+  <script src="profile.js?v=membership" defer></script>
 </head>
 <body>
   <div class="background" aria-hidden="true">
@@ -124,9 +129,12 @@
 
         <nav id="socialLinks" class="social-links" aria-label="Social links"></nav>
 
-        <div id="profileViews" class="profile-views" tabindex="0" data-tooltip="Profile views" aria-label="Profile views">
-          <span id="viewsIcon" aria-hidden="true"></span><span id="viewsCount">0</span>
-        </div>
+        <footer class="profile-footer">
+          <div id="profileViews" class="profile-views" tabindex="0" data-tooltip="Profile views" aria-label="Profile views">
+            <span id="viewsIcon" aria-hidden="true"></span><span id="viewsCount">0</span>
+          </div>
+          <p id="memberSince" class="member-since" hidden>User since <time id="memberSinceDate"></time></p>
+        </footer>
       </article>
     </main>
   </div>
