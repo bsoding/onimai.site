@@ -119,6 +119,7 @@ class Session:
     last_message_id: int | None
     commit_sha: str | None
     created_at: str
+    delete_after: float | None
 
 
 class Store:
@@ -148,6 +149,9 @@ class Store:
                 self.db.execute("ALTER TABLE sessions ADD COLUMN media TEXT NOT NULL DEFAULT '{}'")
                 # Old drafts at review have not seen the new upload steps yet.
                 self.db.execute("UPDATE sessions SET phase='picture',prompt_id=NULL WHERE phase='review'")
+        if "delete_after" not in columns:
+            with self.db:
+                self.db.execute("ALTER TABLE sessions ADD COLUMN delete_after REAL")
 
     def close(self) -> None:
         self.db.close()
@@ -175,6 +179,9 @@ class Store:
     def active(self) -> list[Session]:
         return [self._session(row) for row in self.db.execute("SELECT * FROM sessions WHERE phase IN (" + ACTIVE_SQL + ") ORDER BY id")]
 
+    def pending_deletions(self) -> list[Session]:
+        return [self._session(row) for row in self.db.execute("SELECT * FROM sessions WHERE phase='cancelled' AND channel_id IS NOT NULL AND delete_after IS NOT NULL ORDER BY id")]
+
     def count(self, user_id: int) -> int:
         return self.db.execute("SELECT count(*) FROM sessions WHERE user_id=? AND phase != 'cancelled'", (str(user_id),)).fetchone()[0]
 
@@ -195,7 +202,7 @@ class Store:
             raise
 
     def update(self, session_id: int, **fields) -> Session:
-        allowed = {"phase", "channel_id", "names", "bios", "media", "prompt_id", "last_message_id", "commit_sha"}
+        allowed = {"phase", "channel_id", "names", "bios", "media", "prompt_id", "last_message_id", "commit_sha", "delete_after"}
         if not fields or not set(fields) <= allowed:
             raise ValueError("Invalid session update")
         values = [json.dumps(v, ensure_ascii=False) if k in ("names", "bios", "media") else str(v) if k.endswith("_id") and v is not None else v for k,v in fields.items()]
@@ -203,8 +210,8 @@ class Store:
             self.db.execute("UPDATE sessions SET " + ",".join(k + "=?" for k in fields) + " WHERE id=?", (*values,session_id))
         return self.get(session_id)
 
-    def cancel(self, session_id: int) -> bool:
+    def cancel(self, session_id: int, *, delete_after: float | None = None) -> bool:
         with self.db:
             cancellable = ",".join("'" + phase + "'" for phase in ACTIVE_PHASES if phase != "publishing")
-            cursor = self.db.execute("UPDATE sessions SET phase='cancelled' WHERE id=? AND phase IN (" + cancellable + ")", (session_id,))
+            cursor = self.db.execute("UPDATE sessions SET phase='cancelled',delete_after=? WHERE id=? AND phase IN (" + cancellable + ")", (delete_after, session_id))
         return cursor.rowcount == 1

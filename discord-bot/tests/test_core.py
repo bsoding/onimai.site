@@ -36,6 +36,20 @@ class CoreTests(unittest.TestCase):
         self.assertGreater(second.id, first.id)
         self.assertEqual(self.store.count(123), 1)
 
+    def test_cancelled_channel_deadline_survives_restart_without_scheduling_old_cancellations(self):
+        old = self.store.reserve(123, 456, "old")
+        self.store.update(old.id, phase="names", channel_id=100)
+        self.store.cancel(old.id)
+        current = self.store.reserve(123, 456, "new")
+        self.store.update(current.id, phase="names", channel_id=101)
+        self.store.cancel(current.id, delete_after=12345.5)
+        self.store.close()
+        self.store = Store(self.path)
+        pending = self.store.pending_deletions()
+        self.assertEqual([session.id for session in pending], [current.id])
+        self.assertEqual(pending[0].delete_after, 12345.5)
+        self.assertEqual(self.store.count(123), 0)
+
     def test_endpoint_reserved_for_one_creator(self):
         self.store.reserve(123, 456, "POLLO")
         with self.assertRaises(EndpointTaken):
@@ -125,6 +139,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(current.names,["Pollo"])
         self.assertEqual(current.bios,["hello"])
         self.assertEqual(current.media,{})
+        self.assertIsNone(current.delete_after)
         self.assertEqual(self.store.count(123),1)
         self.assertEqual(self.store.reserve(999,456,"new").id,13)
 

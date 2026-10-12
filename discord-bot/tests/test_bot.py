@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import discord
+
 from bot import BioBot, WizardView
 from core import UserError
 
@@ -34,6 +36,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.channel.id, self.channel.mention = 777, "<#777>"
         self.channel.send = AsyncMock(side_effect=lambda *args, **kwargs: SimpleNamespace(id=1000+self.channel.send.call_count))
         self.channel.get_partial_message.return_value.edit = AsyncMock()
+        self.channel.delete = AsyncMock()
         self.bot.get_channel = Mock(return_value=self.channel)
         self.bot.recovered.set()
         self.bot.publisher = SimpleNamespace(ensure_available=AsyncMock(), publish=AsyncMock(return_value="committed"))
@@ -165,6 +168,55 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.store.count(123),0)
         self.assertFalse((self.bot.data_root/"uploads"/str(self.session.id)).exists())
 
+    async def test_cancel_releases_slot_and_deletes_channel_only_after_15_seconds(self):
+        session = self.bot.store.update(self.session.id, prompt_id=999)
+        interaction = Mock()
+        interaction.user.id, interaction.channel_id, interaction.guild_id = 123, 777, 456
+        interaction.channel = self.channel
+        interaction.response.defer = AsyncMock()
+        interaction.edit_original_response = AsyncMock()
+        waiting, elapsed = asyncio.Event(), asyncio.Event()
+
+        async def wait_for_countdown(delay):
+            self.assertEqual(delay, 15)
+            waiting.set()
+            await elapsed.wait()
+
+        with patch("bot.time.time", return_value=1000), patch("bot.asyncio.sleep", side_effect=wait_for_countdown):
+            view = WizardView(self.bot, session)
+            await next(button for button in view.children if button.label == "Cancel").callback(interaction)
+            await waiting.wait()
+            self.assertEqual(self.bot.store.count(123), 0)
+            self.assertEqual(self.bot.store.get(session.id).phase, "cancelled")
+            self.channel.delete.assert_not_awaited()
+            self.assertIn("15 seconds", interaction.edit_original_response.call_args.kwargs["content"])
+            self.channel.get_partial_message.return_value.edit.assert_awaited_once_with(view=None)
+            elapsed.set()
+            await asyncio.gather(*tuple(self.bot.background_tasks))
+        self.channel.delete.assert_awaited_once()
+        self.assertEqual(self.bot.store.pending_deletions(), [])
+
+    async def test_restart_recovers_overdue_cancelled_channel_deletion(self):
+        self.bot.store.cancel(self.session.id, delete_after=0)
+        self.bot.get_guild = Mock(return_value=SimpleNamespace(id=456))
+        self.bot.get_category = AsyncMock()
+        await self.bot.recover()
+        await asyncio.gather(*tuple(self.bot.background_tasks))
+        self.channel.delete.assert_awaited_once()
+        self.assertEqual(self.bot.store.pending_deletions(), [])
+
+    async def test_deletion_never_removes_active_publishing_or_published_channels(self):
+        for phase in ("names", "publishing", "published"):
+            self.bot.store.update(self.session.id, phase=phase, delete_after=0)
+            await self.bot.delete_cancelled_channel(self.session.id)
+        self.channel.delete.assert_not_awaited()
+
+    async def test_cancelled_channel_already_deleted_clears_pending_timer(self):
+        self.bot.store.cancel(self.session.id, delete_after=0)
+        self.channel.delete.side_effect = discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown Channel")
+        await self.bot.delete_cancelled_channel(self.session.id)
+        self.assertEqual(self.bot.store.pending_deletions(), [])
+
     async def test_publish_cannot_bypass_the_media_steps(self):
         self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"])
         with self.assertRaises(UserError):
@@ -182,6 +234,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(units(embed.description),4096)
         self.assertTrue(all(units(field.value)<=1024 for field in embed.fields))
         self.assertIn("\\*"*598,embed.description)
+        self.assertNotIn("Badges", embed.description)
         self.assertLessEqual(units(embed.description)+sum(units(f.value)+units(f.name) for f in embed.fields)+units(embed.title)+units(embed.footer.text),6000)
 
     async def test_restart_reads_replies_only_after_latest_edit_prompt(self):

@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from publisher import Publisher
 
 LOG = logging.getLogger("onimai")
 ROOT = Path(__file__).resolve().parent
+CANCEL_DELETE_DELAY = 15
 
 
 def required(name: str) -> str:
@@ -111,12 +113,13 @@ class WizardView(discord.ui.View):
                         if session.phase not in ("names", "bio", *MEDIA_PHASES, "review"):
                             raise UserError("This draft is being published or has already finished.")
                         if action == "cancel":
-                            self.bot.store.cancel(session.id)
+                            self.bot.store.cancel(session.id, delete_after=time.time() + CANCEL_DELETE_DELAY)
+                            self.bot.task(self.bot.delete_cancelled_channel(session.id))
                             clean_uploads(self.bot.data_root, session)
-                            await interaction.channel.send("Draft cancelled. Your page slot is available again.", allowed_mentions=discord.AllowedMentions.none())
+                            await interaction.channel.send("Draft cancelled. Your page slot is available again. This channel will be deleted in 15 seconds.", allowed_mentions=discord.AllowedMentions.none())
                             if session.prompt_id:
                                 await self.bot.clear_buttons(interaction.channel, session.prompt_id)
-                            await interaction.edit_original_response(content="Cancelled. You can use /create for a new endpoint.")
+                            await interaction.edit_original_response(content="Cancelled. This channel will be deleted in 15 seconds. You can use /create for a new endpoint.")
                         else:
                             field = action.removeprefix("edit_")
                             if field not in ("names", "bio", *MEDIA_PHASES):
@@ -277,6 +280,25 @@ class BioBot(discord.Client):
         except (discord.NotFound, discord.Forbidden):
             pass
 
+    async def delete_cancelled_channel(self, session_id: int):
+        session = self.store.get(session_id)
+        if not session or session.phase != "cancelled" or session.delete_after is None:
+            return
+        await asyncio.sleep(max(0, session.delete_after - time.time()))
+        async with self.user_lock(session.user_id):
+            session = self.store.get(session_id)
+            if not session or session.phase != "cancelled" or session.delete_after is None or session.channel_id is None:
+                return
+            try:
+                channel = self.get_channel(session.channel_id) or await self.fetch_channel(session.channel_id)
+                await channel.delete(reason="Onimai page draft cancelled; 15-second grace period ended")
+            except discord.NotFound:
+                pass
+            except discord.HTTPException:
+                LOG.exception("Could not delete cancelled creation channel for session %s", session_id)
+                return
+            self.store.update(session_id, delete_after=None)
+
     async def send_prompt(self, session: Session, channel=None):
         channel = channel or self.get_channel(session.channel_id)
         if channel is None:
@@ -307,7 +329,7 @@ class BioBot(discord.Client):
         else:
             content = "Review your page, then click Publish page." if session.phase == "review" else "Publishing is waiting for a retry. Your draft and page slot are saved."
             bio_preview = discord.utils.escape_markdown("\n\n".join(session.bios)) or "—"
-            description = "Names and bios will rotate independently. Badges start empty and are added by the site owner.\n\n**Bio**\n" + bio_preview
+            description = "Names and bios will rotate independently.\n\n**Bio**\n" + bio_preview
             embed = discord.Embed(title=f"onimai.site/{session.endpoint}", description=description, color=0xA369B9)
             embed.add_field(name="Names / aliases", value=preview_names(session.names), inline=False)
             for kind in MEDIA_PHASES:
@@ -485,6 +507,8 @@ class BioBot(discord.Client):
 
     async def recover(self):
         try:
+            for session in self.store.pending_deletions():
+                self.task(self.delete_cancelled_channel(session.id))
             guild = self.get_guild(self.guild_id)
             if not guild:
                 LOG.error("Configured guild is unavailable. Invite this bot to guild %s.", self.guild_id)

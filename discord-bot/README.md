@@ -19,7 +19,7 @@ Names and bios are accepted only through their buttons; ordinary channel message
 
 Publishing copies the current `example/` profile to `<endpoint>/` and commits all its files and uploaded media to `main` atomically. GitHub Pages serves `https://onimai.site/<endpoint>`. Image backgrounds disable the default video. MP4 backgrounds loop as video. Uploaded music is configured to play after the page's existing click-to-enter gesture. The bot checks the deployed text before announcing that the page is live. Names and bios rotate independently. Badges and connections start empty; the owner can add badges by editing `<endpoint>/settings/badges.txt`.
 
-Each Discord user ID can have **three pages total**, across servers, and one unfinished wizard at a time. Drafts reserve a slot; cancelling an unpublished draft releases it. Published pages keep counting even if their channel is deleted. Numbers are global, monotonically increasing wizard numbers, starting at 1; cancelled drafts can leave gaps. Existing manually created pages such as `jvbj/` are protected and do not count toward the bot's three-page allowance.
+Each Discord user ID can have **three pages total**, across servers, and one unfinished wizard at a time. Drafts reserve a slot; cancelling an unpublished draft releases it immediately and deletes its creation channel after 15 seconds. Pending deletion timers survive bot restarts. Published pages keep counting even if their channel is deleted. Numbers are global, monotonically increasing wizard numbers, starting at 1; cancelled drafts can leave gaps. Existing manually created pages such as `jvbj/` are protected and do not count toward the bot's three-page allowance.
 
 ## Raspberry Pi service
 
