@@ -13,6 +13,7 @@ import discord
 
 from bot import BioBot, WizardView
 from core import UserError
+from publisher import GitHubError
 
 
 class Attachment:
@@ -327,6 +328,20 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.publish_session(self.session.id)
         self.assertEqual(self.bot.store.get(self.session.id).phase,"review")
         self.assertTrue(self.bot.store.cancel(self.session.id))
+
+    async def test_permission_failure_keeps_draft_and_can_publish_after_access_is_fixed(self):
+        self.bot.store.update(self.session.id, phase="review", names=["Pollo"], bios=["hello"], media=self.completed_media)
+        self.bot.publisher.publish.side_effect = GitHubError(403, contents_write_denied=True)
+        await self.bot.publish_session(self.session.id)
+        current = self.bot.store.get(self.session.id)
+        self.assertEqual((current.phase, current.names, current.bios, current.media), ("review", ["Pollo"], ["hello"], self.completed_media))
+        self.assertIsNone(current.commit_sha)
+        self.assertIn("Contents: Read and write", self.channel.send.call_args_list[0].args[0])
+        self.bot.publisher.publish.side_effect = None
+        self.bot.wait_for_site = AsyncMock()
+        await self.bot.publish_session(self.session.id)
+        self.assertEqual(self.bot.store.get(self.session.id).phase, "published")
+        self.assertEqual(self.bot.store.count(123), 1)
 
     async def test_successful_publish_consumes_slot_and_announces_commit(self):
         self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media)

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
@@ -13,10 +14,13 @@ import aiohttp
 from core import EndpointTaken, Session, UserError, profile_html
 from media import upload_path, EXTENSIONS
 
+LOG = logging.getLogger("onimai")
+
 
 class GitHubError(RuntimeError):
-    def __init__(self, status: int):
+    def __init__(self, status: int, *, contents_write_denied: bool = False):
         self.status = status
+        self.contents_write_denied = contents_write_denied
         super().__init__(f"GitHub returned HTTP {status}")
 
 
@@ -33,8 +37,17 @@ class Publisher:
         timeout = 180 if method == "POST" and path == "/git/blobs" else 35
         async with self.http.request(method, self.base + path, json=data, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)) as response:
             if response.status >= 400:
-                await response.read()
-                raise GitHubError(response.status)
+                try:
+                    error = await response.json(content_type=None)
+                except (ValueError, aiohttp.ClientError):
+                    error = {}
+                permissions = response.headers.get("X-Accepted-GitHub-Permissions", "")
+                denied = response.status == 403 and "contents=write" in permissions and isinstance(error, dict) and error.get("message") in (
+                    "Resource not accessible by personal access token", "Resource not accessible by integration"
+                )
+                # Log request context without credentials, response bodies or user uploads.
+                LOG.error("GitHub %s %s returned HTTP %s; Contents write denied=%s", method, path, response.status, denied)
+                raise GitHubError(response.status, contents_write_denied=denied)
             return await response.json()
 
     async def snapshot(self):

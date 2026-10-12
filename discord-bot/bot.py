@@ -15,7 +15,7 @@ from discord import app_commands
 
 from core import Store, Session, UserError, EndpointTaken, MEDIA_PHASES, validate_endpoint, parse_names, parse_bios, next_phase
 from media import check_attachment, validate_media, upload_path, clean_uploads
-from publisher import Publisher
+from publisher import Publisher, GitHubError
 
 LOG = logging.getLogger("onimai")
 ROOT = Path(__file__).resolve().parent
@@ -468,13 +468,16 @@ class BioBot(discord.Client):
                     await self.send_prompt(session)
                 return
             except Exception as exc:
-                LOG.error("Publish session %s failed (%s)", session.id, type(exc).__name__)
+                LOG.error("Publish session %s failed (%s%s)", session.id, type(exc).__name__, f", HTTP {exc.status}" if isinstance(exc, GitHubError) else "")
                 current = self.store.get(session.id)
                 # Keep uncertain commits locked against cancellation and edits. A retry
                 # checks commit ancestry before attempting a second publication.
                 session = self.store.update(session.id, phase="publishing" if current.commit_sha else "review")
                 if channel:
-                    await channel.send("Publishing couldn't finish. Your draft is saved. Please use the latest publish button to retry.")
+                    if isinstance(exc, GitHubError) and exc.contents_write_denied:
+                        await channel.send("Publishing is blocked by the bot's GitHub permissions. Ask the site owner to enable repository Contents: Read and write. Your draft is saved; retry after that is fixed.")
+                    else:
+                        await channel.send("Publishing couldn't finish. Your draft is saved. Please use the latest publish button to retry.")
                     await self.send_prompt(session)
                 return
             session = self.store.update(session.id, phase="published", commit_sha=sha, prompt_id=None)

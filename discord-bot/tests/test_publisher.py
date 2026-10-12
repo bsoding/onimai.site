@@ -3,6 +3,7 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 from core import Store, EndpointTaken
 from publisher import Publisher, GitHubError
@@ -109,6 +110,34 @@ class PublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await Publisher.is_published(self.publisher,session))
         self.publisher.published = False
         self.assertFalse(await Publisher.is_published(self.publisher,session))
+
+    async def test_github_write_denial_is_identified_without_logging_credentials_or_uploaded_text(self):
+        response = Mock(status=403, headers={"X-Accepted-GitHub-Permissions": "contents=write"})
+        response.json = AsyncMock(return_value={"message": "Resource not accessible by personal access token"})
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=response)
+        http = Mock(request=Mock(return_value=context))
+        publisher = Publisher(http, "test-private-credential", "bsoding/onimai.site", "main")
+        with self.assertLogs("onimai", level="ERROR") as logs:
+            with self.assertRaises(GitHubError) as raised:
+                await publisher.api("POST", "/git/trees", {"content": "test-private-upload"})
+        self.assertEqual(raised.exception.status, 403)
+        self.assertTrue(raised.exception.contents_write_denied)
+        output = "\n".join(logs.output)
+        self.assertIn("POST /git/trees returned HTTP 403", output)
+        self.assertNotIn("test-private-credential", output)
+        self.assertNotIn("test-private-upload", output)
+
+    async def test_rate_limit_denial_is_not_reported_as_missing_repository_permissions(self):
+        response = Mock(status=403, headers={"X-Accepted-GitHub-Permissions": "contents=write"})
+        response.json = AsyncMock(return_value={"message": "API rate limit exceeded"})
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=response)
+        publisher = Publisher(Mock(request=Mock(return_value=context)), "unused", "bsoding/onimai.site", "main")
+        with self.assertLogs("onimai", level="ERROR"):
+            with self.assertRaises(GitHubError) as raised:
+                await publisher.api("POST", "/git/trees", {})
+        self.assertFalse(raised.exception.contents_write_denied)
 
     async def test_uploads_are_binary_blobs_in_the_same_profile_commit(self):
         root=Path(self.directory.name)
