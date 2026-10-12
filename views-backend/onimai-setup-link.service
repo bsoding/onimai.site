@@ -1,0 +1,22 @@
+[Unit]
+Description=Private LAN link for Onimai tunnel authorization
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=onimai-tunnel
+Group=onimai-ingress
+WorkingDirectory=/var/lib/onimai-tunnel
+ExecStart=/opt/onimai-views/.venv/bin/python /opt/onimai-views/setup_link.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/onimai-tunnel
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

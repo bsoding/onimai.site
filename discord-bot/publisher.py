@@ -75,6 +75,9 @@ class Publisher:
 
     async def publish(self, session: Session, save_commit: Callable[[str], None], save_media: Callable[[str, str], None] | None = None) -> str:
         async with self.lock:
+            if session.kind == 'edit':
+                from editing import publish_edit
+                return await publish_edit(self, session, save_commit, save_media)
             if await self.is_published(session):
                 return session.commit_sha
             initial = await self.snapshot()
@@ -123,6 +126,7 @@ class Publisher:
                     "settings/bios.txt": "\n\n".join(session.bios) + "\n",
                     "settings/badges.txt": "",
                     "settings/connections.txt": connections_text(session.connections),
+                    "settings/revision.txt": str(session.id) + "\n",
                 }
                 replaced = set(overrides) | set(media_paths.values())
                 entries = [{"path":session.endpoint + "/" + entry["path"][len("example/"):], "mode":entry["mode"], "type":"blob", "sha":entry["sha"]} for entry in template if entry["path"][len("example/"):] not in replaced]

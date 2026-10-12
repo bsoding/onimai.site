@@ -16,6 +16,8 @@ from discord import app_commands
 from core import Store, Session, UserError, EndpointTaken, MEDIA_PHASES, CONNECTION_FIELDS, CONNECTION_GROUPS, CONNECTION_PHASES, validate_endpoint, parse_names, parse_bios, parse_connections, next_phase
 from media import check_attachment, validate_media, upload_path, clean_uploads
 from publisher import Publisher, GitHubError
+from editing import load_profile
+from profile_registry import write_registry
 
 LOG = logging.getLogger("onimai")
 ROOT = Path(__file__).resolve().parent
@@ -97,6 +99,19 @@ class ConnectionsModal(discord.ui.Modal):
             await interaction.edit_original_response(content="Your draft is saved. Please try the connections button again.")
 
 
+class PagePickerView(discord.ui.View):
+    def __init__(self, bot: BioBot, user_id: int, pages: list[Session]):
+        super().__init__(timeout=180)
+        selector = discord.ui.Select(placeholder="Choose your page to edit", options=[discord.SelectOption(label=page.endpoint, value=page.endpoint) for page in pages])
+        async def select(interaction):
+            if interaction.user.id != user_id:
+                await interaction.response.send_message("Only the page owner can choose a page.", ephemeral=True)
+                return
+            await bot.edit_page(interaction, selector.values[0])
+        selector.callback = select
+        self.add_item(selector)
+
+
 class WizardView(discord.ui.View):
     def __init__(self, bot: BioBot, session: Session):
         super().__init__(timeout=None)
@@ -105,12 +120,14 @@ class WizardView(discord.ui.View):
             self.button("Enter names" if session.phase == "names" else "Enter bio", session.phase, discord.ButtonStyle.primary)
         if session.phase in MEDIA_PHASES:
             self.button("Skip", "skip_" + session.phase, discord.ButtonStyle.secondary)
+            if session.kind == 'edit':
+                self.button("Remove music" if session.phase == 'music' else "Use site default", "reset_" + session.phase, discord.ButtonStyle.secondary)
         if session.phase in CONNECTION_PHASES:
             page = CONNECTION_PHASES.index(session.phase) + 1
             self.button(f"Enter connections {page}/{len(CONNECTION_GROUPS)}", session.phase, discord.ButtonStyle.primary)
             self.button("Skip remaining connections", "skip_" + session.phase, discord.ButtonStyle.secondary)
         if session.phase in ("review", "publishing"):
-            self.button("Publish page" if session.phase == "review" else "Retry publish", "publish", discord.ButtonStyle.success)
+            self.button(("Submit changes" if session.kind == 'edit' else "Publish page") if session.phase == "review" else "Retry publish", "publish", discord.ButtonStyle.success)
         if session.phase == "review":
             self.button("Edit names", "edit_names", discord.ButtonStyle.secondary)
             self.button("Edit bio", "edit_bio", discord.ButtonStyle.secondary)
@@ -143,6 +160,9 @@ class WizardView(discord.ui.View):
                     await self.bot.publish_session(session.id)
                     current = self.bot.store.get(session.id)
                     await interaction.edit_original_response(content="Your page was submitted. The website link is in this channel." if current.phase == "published" else "Check the latest message in this channel to retry.")
+                elif action.startswith("reset_"):
+                    await self.bot.skip_media(session.id, interaction.user.id, action.removeprefix("reset_"), interaction.id, reset=True)
+                    await interaction.edit_original_response(content="Updated. Review your page before submitting the changes.")
                 elif action.startswith("skip_"):
                     phase = action.removeprefix("skip_")
                     if phase in CONNECTION_PHASES:
@@ -159,10 +179,10 @@ class WizardView(discord.ui.View):
                             self.bot.store.cancel(session.id, delete_after=time.time() + CANCEL_DELETE_DELAY)
                             self.bot.task(self.bot.delete_cancelled_channel(session.id))
                             clean_uploads(self.bot.data_root, session)
-                            await interaction.channel.send("Draft cancelled. Your page slot is available again. This channel will be deleted in 15 seconds.", allowed_mentions=discord.AllowedMentions.none())
+                            await interaction.channel.send("Edit cancelled. Your published page is unchanged. This channel will be deleted in 15 seconds." if session.kind == 'edit' else "Draft cancelled. Your page slot is available again. This channel will be deleted in 15 seconds.", allowed_mentions=discord.AllowedMentions.none())
                             if session.prompt_id:
                                 await self.bot.clear_buttons(interaction.channel, session.prompt_id)
-                            await interaction.edit_original_response(content="Cancelled. This channel will be deleted in 15 seconds. You can use /create for a new endpoint.")
+                            await interaction.edit_original_response(content="Edit cancelled. Your published page is unchanged. This channel will be deleted in 15 seconds." if session.kind == 'edit' else "Cancelled. This channel will be deleted in 15 seconds. You can use /create for a new endpoint.")
                         else:
                             field = action.removeprefix("edit_")
                             if field not in ("names", "bio", *MEDIA_PHASES, "connections"):
@@ -206,6 +226,16 @@ class BioBot(discord.Client):
         async def create(interaction: discord.Interaction, endpoint: str):
             await self.create_page(interaction, endpoint)
 
+        @self.tree.command(name="edit", description="Edit one of your published onimai.site pages.")
+        @app_commands.guild_only()
+        @app_commands.describe(endpoint="Your existing page username; leave blank to choose a page")
+        async def edit(interaction: discord.Interaction, endpoint: str | None = None):
+            await self.edit_page(interaction, endpoint)
+
+        @edit.autocomplete('endpoint')
+        async def edit_autocomplete(interaction, current):
+            return [app_commands.Choice(name=page.endpoint, value=page.endpoint) for page in self.store.pages_for_user(interaction.user.id) if current.lower() in page.endpoint][:25]
+
         @self.tree.error
         async def command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
             LOG.error("Slash command failed: %s", type(error).__name__)
@@ -240,6 +270,78 @@ class BioBot(discord.Client):
         if not self.recovery_started:
             self.recovery_started = True
             self.task(self.recover())
+            if os.environ.get('PROFILE_REGISTRY'):
+                self.task(self.sync_profile_registry())
+
+    async def sync_profile_registry(self):
+        while True:
+            try:
+                _, _, tree = await self.publisher.snapshot()
+                write_registry(os.environ['PROFILE_REGISTRY'], tree)
+            except Exception:
+                LOG.exception("Could not refresh the known profile registry")
+            await asyncio.sleep(300)
+
+    async def edit_page(self, interaction: discord.Interaction, endpoint: str | None):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        session = None
+        channel = None
+        try:
+            if interaction.guild_id != self.guild_id:
+                raise UserError("Use /edit in the Onimai server.")
+            await asyncio.wait_for(self.recovered.wait(), timeout=25)
+            async with self.user_lock(interaction.user.id):
+                active = self.store.active_for_user(interaction.user.id)
+                if active:
+                    active_channel = self.get_channel(active.channel_id) if active.channel_id else None
+                    if active.phase == 'creating' and not active.channel_id:
+                        channels = await interaction.guild.fetch_channels()
+                        active_channel = next((item for item in channels if isinstance(item, discord.TextChannel) and (item.topic or '').startswith(f'onimai-bot session:{active.id} |')), None)
+                        if active_channel:
+                            active = self.store.update(active.id, channel_id=active_channel.id, phase='review' if active.kind == 'edit' else 'names')
+                    if active.channel_id and active_channel is None:
+                        try:
+                            active_channel = await self.fetch_channel(active.channel_id)
+                        except discord.NotFound:
+                            pass
+                    if active_channel:
+                        if not active.prompt_id:
+                            await self.send_prompt(active, active_channel)
+                        await interaction.edit_original_response(content=f"Continue your current draft in {active_channel.mention}. Finish or cancel it before opening another.")
+                        return
+                    if active.phase == 'publishing':
+                        raise UserError("Your previous submission is still being published. Please try again shortly.")
+                    self.store.cancel(active.id)
+                    clean_uploads(self.data_root, active)
+                pages = self.store.pages_for_user(interaction.user.id)
+                if not pages:
+                    raise UserError("You don't have a published page to edit yet. Use /create first.")
+                if endpoint is None and len(pages) > 1:
+                    await interaction.edit_original_response(content="Choose which page to edit.", view=PagePickerView(self, interaction.user.id, pages))
+                    return
+                endpoint = validate_endpoint(endpoint) if endpoint is not None else pages[0].endpoint
+                page = next((page for page in pages if page.endpoint == endpoint), None)
+                if not page:
+                    raise UserError("You can only edit pages created by your Discord account.")
+                values = await load_profile(self.publisher, page)
+                category = await self.get_category(interaction.guild)
+                if len(category.channels) >= 50:
+                    raise UserError("The Create category is full. Ask the owner to move completed channels.")
+                session = self.store.start_edit(page.id, interaction.user.id, interaction.guild_id, values)
+                overwrites = {interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False), interaction.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, embed_links=True, attach_files=True, manage_channels=True), interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, attach_files=True)}
+                channel = await interaction.guild.create_text_channel(f"edit-{session.id}-{session.user_id}", category=category, overwrites=overwrites, topic=f"onimai-bot session:{session.id} | {self.site}/{endpoint}", reason="Onimai /edit private profile editor")
+                session = self.store.update(session.id, phase='review', channel_id=channel.id)
+                await self.send_prompt(session, channel)
+                await interaction.edit_original_response(content=f"Edit your page in {channel.mention}.", view=None)
+        except UserError as exc:
+            await interaction.edit_original_response(content=str(exc))
+        except discord.Forbidden:
+            if session and not channel:
+                self.store.cancel(session.id)
+            await interaction.edit_original_response(content="I need channel and message permissions to open the editor. Your published page is unchanged.")
+        except Exception:
+            LOG.exception("Could not open the profile editor")
+            await interaction.edit_original_response(content="I couldn't open the editor. Your published page is unchanged; try /edit again shortly.")
 
     async def get_category(self, guild: discord.Guild) -> discord.CategoryChannel:
         async with self.category_lock:
@@ -368,6 +470,8 @@ class BioBot(discord.Client):
                 "music": ("Step 5 · Profile music", "Please send your profile music as an MP3 in this channel.", "Send one MP3 music file, up to 25 MB. Music plays after visitors click to enter. Click **Skip** for no music."),
             }
             title, content, description = prompts[session.phase]
+            if session.kind == 'edit':
+                description = "Send the replacement file in this channel. Click **Skip** to keep the current file, or **Remove music** / **Use site default** to reset it."
             embed = discord.Embed(title=title, description=description, color=0xA369B9)
         elif session.phase in CONNECTION_PHASES:
             page = CONNECTION_PHASES.index(session.phase)
@@ -375,7 +479,7 @@ class BioBot(discord.Client):
             services = ", ".join(label for _, label, _ in CONNECTION_GROUPS[page])
             embed = discord.Embed(title=f"Step 6 · Connections {page + 1}/{len(CONNECTION_GROUPS)}", description=f"{services}\n\nEach field shows an example of the format. Leave blank for no connection. Click **Skip remaining connections** if you have no more to add.", color=0xA369B9)
         else:
-            content = "Review your page, then click Publish page." if session.phase == "review" else "Publishing is waiting for a retry. Your draft and page slot are saved."
+            content = ("Choose any Edit button below, then click Submit changes. Your published page stays available while you edit." if session.kind == 'edit' else "Review your page, then click Publish page.") if session.phase == "review" else "Publishing is waiting for a retry. Your draft is saved."
             bio_preview = discord.utils.escape_markdown("\n\n".join(session.bios)) or "—"
             description = "Names and bios will rotate independently.\n\n**Bio**\n" + bio_preview
             embed = discord.Embed(title=f"onimai.site/{session.endpoint}", description=description, color=0xA369B9)
@@ -407,6 +511,8 @@ class BioBot(discord.Client):
             values = parse_names(text) if field == "names" else parse_bios(text)
             old_prompt = session.prompt_id
             fields = {"names" if field == "names" else "bios":values,"prompt_id":None}
+            if session.kind == 'edit':
+                fields['changes'] = sorted(set(session.changes) | {field})
             if message_id:
                 fields["last_message_id"] = message_id
             fields["phase"] = next_phase(values if field == "names" else session.names, values if field == "bio" else session.bios, session.media, session.connections)
@@ -428,7 +534,7 @@ class BioBot(discord.Client):
                 raise UserError("Use the fields in the current connections popup.")
             connections = {**session.connections, **parse_connections({key: values.get(key, "") for key in keys})}
             following = CONNECTION_PHASES[page + 1] if page + 1 < len(CONNECTION_PHASES) else next_phase(session.names, session.bios, session.media, connections)
-            current = self.store.update(session.id, connections=connections, phase=following, prompt_id=None, last_message_id=message_id)
+            current = self.store.update(session.id, connections=connections, phase=following, prompt_id=None, last_message_id=message_id, changes=sorted(set(session.changes) | {'connections'}) if session.kind == 'edit' else session.changes)
             if session.prompt_id:
                 await self.clear_buttons(self.get_channel(session.channel_id), session.prompt_id)
             await self.send_prompt(current)
@@ -445,15 +551,18 @@ class BioBot(discord.Client):
                 await self.clear_buttons(self.get_channel(session.channel_id), session.prompt_id)
             await self.send_prompt(current)
 
-    async def skip_media(self, session_id: int, user_id: int, kind: str, checkpoint: int):
+    async def skip_media(self, session_id: int, user_id: int, kind: str, checkpoint: int, *, reset: bool = False):
         async with self.user_lock(user_id):
             session = self.store.get(session_id)
             if not session or session.user_id != user_id or session.phase != kind or kind not in MEDIA_PHASES:
                 raise UserError("Use the Skip button on the latest upload prompt.")
             old_entry = session.media.get(kind)
-            media = {**session.media, kind:None}
-            current = self.store.update(session.id, media=media, phase=next_phase(session.names, session.bios, media, session.connections), prompt_id=None, last_message_id=checkpoint)
-            if old_entry:
+            if reset and session.kind != 'edit':
+                raise UserError("Use the current upload prompt's buttons.")
+            keep = session.kind == 'edit' and not reset
+            media = dict(session.media) if keep else {**session.media, kind:None}
+            current = self.store.update(session.id, media=media, phase=next_phase(session.names, session.bios, media, session.connections), prompt_id=None, last_message_id=checkpoint, changes=sorted(set(session.changes) | {kind}) if reset else session.changes)
+            if old_entry and old_entry.get('path') and not keep:
                 upload_path(self.data_root, session.id, old_entry["path"]).unlink(missing_ok=True)
             if session.prompt_id:
                 await self.clear_buttons(self.get_channel(session.channel_id), session.prompt_id)
@@ -489,10 +598,10 @@ class BioBot(discord.Client):
                     "sha256":hashlib.sha256(destination.read_bytes()).hexdigest(),
                 }
                 media = {**session.media, kind:entry}
-                current = self.store.update(session.id, media=media, phase=next_phase(session.names, session.bios, media, session.connections), prompt_id=None, last_message_id=message_id)
+                current = self.store.update(session.id, media=media, phase=next_phase(session.names, session.bios, media, session.connections), prompt_id=None, last_message_id=message_id, changes=sorted(set(session.changes) | {kind}) if session.kind == 'edit' else session.changes)
                 saved = True
                 previous = session.media.get(kind)
-                if previous:
+                if previous and previous.get('path'):
                     upload_path(self.data_root, session.id, previous["path"]).unlink(missing_ok=True)
                 if session.prompt_id:
                     await self.clear_buttons(self.get_channel(session.channel_id), session.prompt_id)
@@ -539,12 +648,23 @@ class BioBot(discord.Client):
                 raise UserError("Complete the names and bio steps before publishing.")
             if session.phase == "review" and next_phase(session.names, session.bios, session.media, session.connections) != "review":
                 raise UserError("Complete or skip the media and connections steps before submitting your page.")
+            if session.kind == 'edit':
+                parent = self.store.get(session.parent_id)
+                if not parent or parent.user_id != session.user_id or parent.endpoint != session.endpoint or parent.phase != 'published' or parent.kind != 'create':
+                    raise UserError("The original page ownership could not be verified.")
             channel = self.get_channel(session.channel_id)
             session = self.store.update(session.id, phase="publishing")
             try:
                 sha = await self.publisher.publish(session, lambda commit: self.store.update(session.id, commit_sha=commit), lambda kind, blob: self.save_media_blob(session.id, kind, blob))
             except EndpointTaken as exc:
                 session = self.store.update(session.id, phase="review")
+                if channel:
+                    await channel.send(str(exc))
+                    await self.send_prompt(session)
+                return
+            except UserError as exc:
+                current = self.store.get(session.id)
+                session = self.store.update(session.id, phase='publishing' if current.commit_sha else 'review')
                 if channel:
                     await channel.send(str(exc))
                     await self.send_prompt(session)
@@ -562,8 +682,14 @@ class BioBot(discord.Client):
                         await channel.send("Publishing couldn't finish. Your draft is saved. Please use the latest publish button to retry.")
                     await self.send_prompt(session)
                 return
-            session = self.store.update(session.id, phase="published", commit_sha=sha, prompt_id=None)
+            session = self.store.finish_publish(session.id, sha)
             clean_uploads(self.data_root, session)
+            if os.environ.get('PROFILE_REGISTRY'):
+                try:
+                    _, _, tree = await self.publisher.snapshot()
+                    write_registry(os.environ['PROFILE_REGISTRY'], tree)
+                except Exception:
+                    LOG.exception("Could not refresh the profile registry after publication")
             if channel:
                 if original.prompt_id:
                     await self.clear_buttons(channel, original.prompt_id)
@@ -572,15 +698,15 @@ class BioBot(discord.Client):
             LOG.info("Published /%s in commit %s", session.endpoint, sha[:12])
 
     async def wait_for_site(self, session: Session):
-        expected = "\n".join(session.names)
+        expected = str(session.id)
         channel = self.get_channel(session.channel_id)
         try:
             for _ in range(20):
                 try:
-                    async with self.http_session.get(f"{self.site}/{session.endpoint}/settings/names.txt?commit={session.commit_sha}", timeout=aiohttp.ClientTimeout(total=12)) as response:
+                    async with self.http_session.get(f"{self.site}/{session.endpoint}/settings/revision.txt?commit={session.commit_sha}", timeout=aiohttp.ClientTimeout(total=12)) as response:
                         if response.status == 200 and (await response.text()).strip() == expected:
                             if channel:
-                                await channel.send(f"Your bio page is live: <{self.site}/{session.endpoint}>")
+                                await channel.send(f"Your changes are published: <{self.site}/{session.endpoint}>" if session.kind == 'edit' else f"Your bio page is live: <{self.site}/{session.endpoint}>")
                             return
                 except (aiohttp.ClientError, asyncio.TimeoutError):
                     pass
@@ -605,7 +731,7 @@ class BioBot(discord.Client):
                     if session.phase == "creating":
                         channel = next((c for c in guild.text_channels if (c.topic or "").startswith(f"onimai-bot session:{session.id} |")), None)
                         if channel:
-                            session = self.store.update(session.id, phase="names", channel_id=channel.id)
+                            session = self.store.update(session.id, phase="review" if session.kind == 'edit' else "names", channel_id=channel.id)
                         else:
                             self.store.cancel(session.id)
                             continue

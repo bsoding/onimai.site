@@ -449,9 +449,41 @@
     $("particles").append(fragment);
   }
 
-  function enter() {
+  let viewAttempted = false;
+  const viewsAPI = "https://api.onimai.site";
+  const viewsEndpoint = location.pathname.split("/").filter(Boolean)[0];
+  function showViews(views) {
+    if (!Number.isSafeInteger(views) || views < 0) return;
+    $("viewsCount").textContent = views.toLocaleString();
+    $("profileViews").setAttribute("aria-label", `${views.toLocaleString()} profile views`);
+  }
+  async function loadViews() {
+    if (!viewsEndpoint || viewsEndpoint === "example") return;
+    try {
+      const response = await fetch(`${viewsAPI}/v1/views/${encodeURIComponent(viewsEndpoint)}`, {credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(8000)});
+      if (response.ok) showViews((await response.json()).views);
+    } catch { /* The page remains usable while the tunnel is unavailable. */ }
+  }
+  async function recordView() {
+    if (viewAttempted || !viewsEndpoint || viewsEndpoint === "example" || document.hidden) return;
+    viewAttempted = true;
+    const url = `${viewsAPI}/v1/views/${encodeURIComponent(viewsEndpoint)}`;
+    try {
+      const response = await fetch(`${url}/challenge`, {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}", credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(8000)});
+      if (!response.ok) return;
+      const challenge = await response.json();
+      if (typeof challenge.token !== "string") return;
+      await new Promise(resolve => setTimeout(resolve, Math.max(2200, Number(challenge.wait_ms) || 2200)));
+      if (document.hidden) return;
+      const claim = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({token: challenge.token}), credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(8000)});
+      if (claim.ok) showViews((await claim.json()).views);
+    } catch { /* Analytics failures never prevent profile entry. */ }
+  }
+
+  function enter(event) {
     if (entered) return;
     entered = true;
+    if (event?.isTrusted) recordView();
     document.body.classList.add("entered");
     $("page").inert = false;
     $("page").removeAttribute("aria-hidden");
@@ -502,6 +534,7 @@
   renderDiscord();
   loadSettings();
   loadMemberSince();
+  loadViews();
   makeParticles();
   // Keep all media muted until the visitor's entry gesture.
   $("muteButton").innerHTML = icons.volume;

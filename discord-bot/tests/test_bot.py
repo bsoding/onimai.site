@@ -449,11 +449,48 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.on_guild_channel_delete(self.channel)
         self.assertEqual(self.bot.store.count(123),1)
 
+    async def test_edit_command_rejects_other_owners_before_loading_or_creating_channel(self):
+        self.bot.store.update(self.session.id,phase='published')
+        interaction = Mock()
+        interaction.guild_id,interaction.user.id = 456,999
+        interaction.response.defer = AsyncMock()
+        interaction.edit_original_response = AsyncMock()
+        with patch('bot.load_profile',new=AsyncMock()) as load:
+            await self.bot.edit_page(interaction,'pollo')
+            load.assert_not_awaited()
+        interaction.guild.create_text_channel.assert_not_called()
+
+    async def test_edit_opens_private_editor_at_page_limit_and_cancel_keeps_page(self):
+        self.bot.store.update(self.session.id,phase='published',channel_id=555,names=['Pollo'],bios=['hello'])
+        for endpoint in ['second','third']:
+            page = self.bot.store.reserve(123,456,endpoint)
+            self.bot.store.update(page.id,phase='published')
+        interaction = Mock()
+        interaction.guild_id,interaction.user.id,interaction.channel_id,interaction.id = 456,123,777,2000
+        interaction.channel = self.channel
+        interaction.response.defer = AsyncMock()
+        interaction.edit_original_response = AsyncMock()
+        interaction.guild.create_text_channel = AsyncMock(return_value=self.channel)
+        self.bot.get_category = AsyncMock(return_value=SimpleNamespace(channels=[]))
+        values = {'names':['Pollo'],'bios':['hello'],'media':{kind:{'source':'existing','original_name':'Existing file'} for kind in self.completed_media},'connections':self.completed_connections,'source_blobs':{'index.html':'old'},'changes':[]}
+        with patch('bot.load_profile',new=AsyncMock(return_value=values)):
+            await self.bot.edit_page(interaction,'pollo')
+        edit = self.bot.store.active_for_user(123)
+        self.assertEqual((edit.kind,edit.phase,edit.parent_id),('edit','review',self.session.id))
+        self.assertEqual(self.bot.store.count(123),3)
+        self.assertFalse(interaction.guild.create_text_channel.call_args.kwargs['overwrites'][interaction.guild.default_role].view_channel)
+        view = WizardView(self.bot,edit)
+        await next(button for button in view.children if button.label=='Cancel').callback(interaction)
+        self.assertEqual(self.bot.store.count(123),3)
+        self.assertEqual(self.bot.store.get(self.session.id).phase,'published')
+        self.assertIn('published page is unchanged',interaction.edit_original_response.call_args.kwargs['content'])
+
     def test_slash_command_has_only_endpoint_parameter(self):
         commands=self.bot.tree.get_commands()
-        self.assertEqual([c.name for c in commands],["create"])
+        self.assertEqual([c.name for c in commands],["create", "edit"])
         self.assertEqual([p.name for p in commands[0].parameters],["endpoint"])
         self.assertTrue(commands[0].parameters[0].required)
+        self.assertFalse(commands[1].parameters[0].required)
 
 
 if __name__ == "__main__":

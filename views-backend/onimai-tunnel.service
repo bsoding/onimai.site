@@ -1,0 +1,23 @@
+[Unit]
+Description=Cloudflare Tunnel for Onimai profile views
+Wants=network-online.target onimai-views.service
+After=network-online.target onimai-views.service
+ConditionPathExists=/var/lib/onimai-tunnel/config.yml
+
+[Service]
+User=onimai-tunnel
+Group=onimai-ingress
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate tunnel --config /var/lib/onimai-tunnel/config.yml --metrics 127.0.0.1:20248 run
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=/var/lib/onimai-tunnel
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/onimai-tunnel
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

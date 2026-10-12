@@ -122,7 +122,7 @@ def upload_path(root: Path, session_id: int, relative: str) -> Path:
 
 def clean_uploads(root: Path, session: Session) -> None:
     for entry in session.media.values():
-        if entry:
+        if entry and entry.get("path"):
             upload_path(root, session.id, entry["path"]).unlink(missing_ok=True)
     directory = root / "uploads" / str(session.id)
     if directory.exists():

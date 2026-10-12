@@ -6,6 +6,10 @@ One slash command, with just one parameter:
 /create endpoint:pollo
 ```
 
+Use `/edit endpoint:pollo` to edit a page created by your Discord user ID. `/edit` with no endpoint opens your only page, or offers a private page picker if you have several. The editor opens at Review with current values loaded from the repository. Edit names, bio, picture, background, music or connections, then **Submit changes**. Cancelling closes the edit channel after 15 seconds and keeps the published page intact. Edits use no additional page slots, including when all three slots are occupied. Badges remain owner controlled. Updates preserve existing custom page code and unchanged files; a conflicting edit to a changed field requires reopening the editor. A revision marker verifies that the latest submission has deployed before the publication message.
+
+The companion `views-backend/` service counts protected daily unique visits for existing and future profiles. Configure `PROFILE_REGISTRY=/var/lib/onimai-registry/profiles.json` in the bot service environment. The bot publishes only valid endpoint names to that registry after submissions and periodically; no Discord user IDs or credentials are shared with the views service.
+
 The bot privately replies with the channel link to `create-<number>-<Discord user ID>` under **Create**. The opening reply contains no website URL. The wizard follows this order:
 
 1. **Names / aliases:** click **Enter names** and enter one per line in the modal.

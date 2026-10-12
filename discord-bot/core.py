@@ -30,7 +30,7 @@ CONNECTION_PHASES = tuple(f"connections_{i + 1}" for i in range(len(CONNECTION_G
 CONNECTION_KEYS = {field[0] for field in CONNECTION_FIELDS}
 ACTIVE_PHASES = ("creating", "names", "bio", *MEDIA_PHASES, *CONNECTION_PHASES, "review", "publishing")
 ACTIVE_SQL = ",".join("'" + phase + "'" for phase in ACTIVE_PHASES)
-RESERVED = {"assets", "example", "discord-bot", "api", "admin", "www", "create", "settings"}
+RESERVED = {"assets", "example", "discord-bot", "views-backend", "api", "admin", "www", "create", "edit", "settings"}
 
 
 class UserError(ValueError):
@@ -148,7 +148,7 @@ def next_phase(names: list[str], bios: list[str], media: dict, connections: dict
     return "review"
 
 
-def profile_html(template: str, names: list[str], bios: list[str], media_paths: dict[str, str] | None = None) -> str:
+def profile_html(template: str, names: list[str], bios: list[str], media_paths: dict[str, str] | None = None, *, preserve_media: bool = False) -> str:
     """Update fallback text and sharing metadata without treating user text as code."""
     result, count = re.subn(r'fallbackName:\s*"(?:[^"\\]|\\.)*"', lambda _: "fallbackName: " + script_json(names[0]), template, count=1)
     if count != 1:
@@ -163,11 +163,13 @@ def profile_html(template: str, names: list[str], bios: list[str], media_paths: 
     result = re.sub(r'(<span id="nameText">).*?(</span>)', lambda m: m[1] + name + m[2], result, count=1, flags=re.S)
     result = re.sub(r'(<span id="bioText">).*?(</span>)', lambda m: m[1] + html.escape(bios[0]) + m[2], result, count=1, flags=re.S)
     media_paths = media_paths or {}
-    settings = {"audio": media_paths.get("music", "")}
+    settings = {"audio": media_paths["music"]} if "music" in media_paths else {} if preserve_media else {"audio": ""}
     if "picture" in media_paths:
         settings["avatar"] = media_paths["picture"]
         result = result.replace('src="assets/profile.png"', 'src="' + html.escape(media_paths["picture"], quote=True) + '"')
         result = result.replace('href="assets/profile.png"', 'href="' + html.escape(media_paths["picture"], quote=True) + '"')
+        result = re.sub(r'(<img\b[^>]*\bid="avatar"[^>]*\bsrc=")[^"]*"', lambda m: m[1] + html.escape(media_paths["picture"], quote=True) + '"', result, count=1)
+        result = re.sub(r'(<link\b[^>]*\brel="icon"[^>]*\bhref=")[^"]*"', lambda m: m[1] + html.escape(media_paths["picture"], quote=True) + '"', result, count=1)
     if "background" in media_paths:
         background = media_paths["background"]
         settings["backgroundVideo"] = background if background.endswith(".mp4") else ""
@@ -198,6 +200,10 @@ class Session:
     created_at: str
     delete_after: float | None
     connections: dict
+    kind: str
+    parent_id: int | None
+    changes: list[str]
+    source_blobs: dict
 
 
 class Store:
@@ -234,6 +240,14 @@ class Store:
             with self.db:
                 self.db.execute("ALTER TABLE sessions ADD COLUMN connections TEXT NOT NULL DEFAULT '{}'")
                 self.db.execute("UPDATE sessions SET phase='connections_1',prompt_id=NULL WHERE phase='review'")
+        if "kind" not in columns:
+            with self.db:
+                self.db.execute("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'create'")
+                self.db.execute("ALTER TABLE sessions ADD COLUMN parent_id INTEGER")
+                self.db.execute("ALTER TABLE sessions ADD COLUMN changes TEXT NOT NULL DEFAULT '[]'")
+                self.db.execute("ALTER TABLE sessions ADD COLUMN source_blobs TEXT NOT NULL DEFAULT '{}'")
+                self.db.execute("DROP INDEX reserved_endpoint")
+                self.db.execute("CREATE UNIQUE INDEX reserved_endpoint ON sessions(endpoint) WHERE phase != 'cancelled' AND kind='create'")
 
     def close(self) -> None:
         self.db.close()
@@ -248,6 +262,8 @@ class Store:
         data["names"], data["bios"] = json.loads(data["names"]), json.loads(data["bios"])
         data["media"] = json.loads(data["media"])
         data["connections"] = json.loads(data["connections"])
+        data["changes"] = json.loads(data["changes"])
+        data["source_blobs"] = json.loads(data["source_blobs"])
         return Session(**data)
 
     def get(self, session_id: int) -> Session | None:
@@ -266,7 +282,33 @@ class Store:
         return [self._session(row) for row in self.db.execute("SELECT * FROM sessions WHERE phase='cancelled' AND channel_id IS NOT NULL AND delete_after IS NOT NULL ORDER BY id")]
 
     def count(self, user_id: int) -> int:
-        return self.db.execute("SELECT count(*) FROM sessions WHERE user_id=? AND phase != 'cancelled'", (str(user_id),)).fetchone()[0]
+        return self.db.execute("SELECT count(*) FROM sessions WHERE user_id=? AND phase != 'cancelled' AND kind='create'", (str(user_id),)).fetchone()[0]
+
+    def pages_for_user(self, user_id: int) -> list[Session]:
+        return [self._session(row) for row in self.db.execute("SELECT * FROM sessions WHERE user_id=? AND kind='create' AND phase='published' ORDER BY id", (str(user_id),))]
+
+    def start_edit(self, page_id: int, user_id: int, guild_id: int, values: dict) -> Session:
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            page = self.get(page_id)
+            if not page or page.kind != 'create' or page.phase != 'published' or page.user_id != user_id:
+                raise UserError("You can only edit pages created by your Discord account.")
+            if self.active_for_user(user_id):
+                raise UserError("Finish or cancel your current draft before editing another page.")
+            cursor = self.db.execute("INSERT INTO sessions(user_id,guild_id,endpoint,kind,parent_id) VALUES(?,?,?,'edit',?)", (str(user_id), str(guild_id), page.endpoint, page.id))
+            session_id = cursor.lastrowid
+        return self.update(session_id, **values)
+
+    def finish_publish(self, session_id: int, commit_sha: str) -> Session:
+        with self.db:
+            session = self.get(session_id)
+            if session.kind == 'edit':
+                page = self.get(session.parent_id)
+                if not page or page.kind != 'create' or page.phase != 'published' or page.user_id != session.user_id or page.endpoint != session.endpoint:
+                    raise UserError("The original page ownership could not be verified.")
+                self.db.execute("UPDATE sessions SET names=?,bios=?,media=?,connections=?,commit_sha=? WHERE id=?", (json.dumps(session.names), json.dumps(session.bios), json.dumps(session.media), json.dumps(session.connections), commit_sha, page.id))
+            self.db.execute("UPDATE sessions SET phase='published',commit_sha=?,prompt_id=NULL WHERE id=?", (commit_sha, session_id))
+        return self.get(session_id)
 
     def reserve(self, user_id: int, guild_id: int, endpoint: str) -> Session:
         endpoint = validate_endpoint(endpoint)
@@ -285,10 +327,10 @@ class Store:
             raise
 
     def update(self, session_id: int, **fields) -> Session:
-        allowed = {"phase", "channel_id", "names", "bios", "media", "connections", "prompt_id", "last_message_id", "commit_sha", "delete_after"}
+        allowed = {"phase", "channel_id", "names", "bios", "media", "connections", "changes", "source_blobs", "prompt_id", "last_message_id", "commit_sha", "delete_after"}
         if not fields or not set(fields) <= allowed:
             raise ValueError("Invalid session update")
-        values = [json.dumps(v, ensure_ascii=False) if k in ("names", "bios", "media", "connections") else str(v) if k.endswith("_id") and v is not None else v for k,v in fields.items()]
+        values = [json.dumps(v, ensure_ascii=False) if k in ("names", "bios", "media", "connections", "changes", "source_blobs") else str(v) if k.endswith("_id") and v is not None else v for k,v in fields.items()]
         with self.db:
             self.db.execute("UPDATE sessions SET " + ",".join(k + "=?" for k in fields) + " WHERE id=?", (*values,session_id))
         return self.get(session_id)

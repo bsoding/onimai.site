@@ -1,0 +1,29 @@
+[Unit]
+Description=Onimai protected profile views backend
+After=network.target
+
+[Service]
+User=onimai-views
+Group=onimai-ingress
+SupplementaryGroups=onimai-views
+WorkingDirectory=/opt/onimai-views
+EnvironmentFile=/etc/onimai-views/environment
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/onimai-views/.venv/bin/gunicorn --bind unix:/run/onimai-views/api.sock --umask 007 --workers 2 --threads 2 --timeout 20 --limit-request-line 1024 --limit-request-fields 40 --limit-request-field_size 2048 --max-requests 1000 --max-requests-jitter 100 app:app
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=onimai-views
+RuntimeDirectoryMode=0750
+StateDirectory=onimai-views
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/onimai-views /run/onimai-views
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

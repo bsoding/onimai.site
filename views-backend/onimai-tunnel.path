@@ -1,0 +1,9 @@
+[Unit]
+Description=Start the Onimai tunnel after its configuration is finalized
+
+[Path]
+PathExists=/var/lib/onimai-tunnel/config.yml
+Unit=onimai-tunnel.service
+
+[Install]
+WantedBy=multi-user.target
