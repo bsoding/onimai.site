@@ -4,7 +4,7 @@ import sqlite3
 import unittest
 from pathlib import Path
 
-from core import Store, PageLimit, EndpointTaken, UserError, validate_endpoint, parse_names, parse_bios, profile_html
+from core import Store, PageLimit, EndpointTaken, UserError, CONNECTION_FIELDS, parse_connections, connections_text, validate_endpoint, parse_names, parse_bios, profile_html
 
 
 class CoreTests(unittest.TestCase):
@@ -113,6 +113,56 @@ class CoreTests(unittest.TestCase):
         self.assertIn("&lt;img src=x&gt;", rendered)
         self.assertIn("&quot; onload=&quot;", rendered)
         self.assertNotIn("<img src=x>", rendered)
+
+    def test_connections_cover_every_site_platform_without_duplicate_aliases(self):
+        settings = (Path(__file__).resolve().parents[2] / "example/settings/connections.txt").read_text()
+        keys = {line.split("=", 1)[0] for line in settings.splitlines() if "=" in line}
+        aliases = {"TWITTER": "X", "MAIL": "EMAIL"}
+        self.assertEqual({aliases.get(key, key) for key in keys}, {key for key, _, _ in CONNECTION_FIELDS})
+
+    def test_connections_accept_handles_urls_email_and_blanks(self):
+        values = parse_connections({"GITHUB": " @username ", "YOUTUBE": "", "DISCORD": "123456789012345678", "WEBSITE": "https://example.com/?a=1&b=2", "EMAIL": "you@example.com"})
+        self.assertEqual(values["GITHUB"], "username")
+        rendered = connections_text(values)
+        self.assertIn("GITHUB=username\n", rendered)
+        self.assertIn("WEBSITE=https://example.com/?a=1&b=2\n", rendered)
+        self.assertIn("YOUTUBE=\n", rendered)
+        self.assertEqual(connections_text({key: "" for key, _, _ in CONNECTION_FIELDS}), "")
+
+    def test_connection_values_cannot_inject_settings_or_unsafe_schemes(self):
+        for values in [{"GITHUB": "user\nEMAIL=other@example.com"}, {"GITHUB": "javascript:alert(1)"}, {"WEBSITE": "data:text/html,bad"}, {"EMAIL": "invalid"}, {"GITHUB": "bad/name"}, {"GITHUB": "@"}, {"WEBSITE": "https://"}, {"WEBSITE": "https://name:password@example.com"}, {"UNKNOWN": "username"}]:
+            with self.subTest(values=values), self.assertRaises(UserError):
+                parse_connections(values)
+
+    def test_partial_connections_survive_restart_and_stay_an_active_draft(self):
+        session = self.store.reserve(123, 456, "pollo")
+        self.store.update(session.id, phase="connections_2", connections={"GITHUB": "username", "YOUTUBE": "", "INSTAGRAM": "", "SPOTIFY": ""})
+        self.store.close()
+        self.store = Store(self.path)
+        current = self.store.active_for_user(123)
+        self.assertEqual(current.id, session.id)
+        self.assertEqual(current.phase, "connections_2")
+        self.assertEqual(current.connections["GITHUB"], "username")
+        self.assertEqual(self.store.count(123), 1)
+
+    def test_connections_schema_upgrade_moves_reviews_and_preserves_published_pages(self):
+        draft = self.store.reserve(123, 456, "draft")
+        self.store.update(draft.id, phase="review", names=["Pollo"], bios=["hello"], media={"picture": None, "background": None, "music": None}, prompt_id=777)
+        published = self.store.reserve(124, 456, "published")
+        self.store.update(published.id, phase="published", commit_sha="existing")
+        self.store.close()
+        with sqlite3.connect(self.path) as database:
+            database.execute("ALTER TABLE sessions DROP COLUMN connections")
+        database.close()
+        self.store = Store(self.path)
+        current = self.store.get(draft.id)
+        self.assertEqual(current.phase, "connections_1")
+        self.assertIsNone(current.prompt_id)
+        self.assertEqual((current.names, current.bios, current.connections), (["Pollo"], ["hello"], {}))
+        self.assertEqual(self.store.get(published.id).phase, "published")
+        self.assertEqual(self.store.get(published.id).commit_sha, "existing")
+        self.assertEqual(self.store.count(123), 1)
+        self.assertEqual(self.store.count(124), 1)
 
     def test_media_html_uses_uploads_and_disables_video_for_image_background(self):
         template=(Path(__file__).resolve().parents[2]/"example/index.html").read_text(encoding="utf-8")

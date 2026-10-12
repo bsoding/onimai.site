@@ -89,6 +89,16 @@ class PublisherTests(unittest.IsolatedAsyncioTestCase):
             await self.publisher.publish(self.session, self.save)
         self.assertEqual(self.publisher.calls, [])
 
+    async def test_saved_connections_are_in_the_atomic_profile_commit(self):
+        session = self.store.update(self.session.id, connections={"GITHUB": "username", "X": "handle", "DISCORD": "123456789012345678", "EMAIL": "you@example.com"})
+        await self.publisher.publish(session, self.save)
+        entry = next(entry for entry in self.publisher.tree_payloads[0]["tree"] if entry["path"] == "pollo/settings/connections.txt")
+        self.assertIn("GITHUB=username\n", entry["content"])
+        self.assertIn("X=handle\n", entry["content"])
+        self.assertIn("DISCORD=123456789012345678\n", entry["content"])
+        self.assertIn("EMAIL=you@example.com\n", entry["content"])
+        self.assertIn("INSTAGRAM=\n", entry["content"])
+
     async def test_branch_advance_rebuilds_commit_without_force(self):
         self.publisher.conflicts = 1
         sha = await self.publisher.publish(self.session, self.save)

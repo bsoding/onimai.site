@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import discord
 
-from bot import BioBot, WizardView
-from core import UserError
+from bot import BioBot, WizardView, ConnectionsModal
+from core import UserError, CONNECTION_FIELDS, CONNECTION_GROUPS, CONNECTION_PHASES
 from publisher import GitHubError
 
 
@@ -44,6 +44,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.session = self.bot.store.reserve(123,456,"pollo")
         self.session = self.bot.store.update(self.session.id, phase="names", channel_id=777)
         self.completed_media = {"picture":None,"background":None,"music":None}
+        self.completed_connections = {key: "" for key, _, _ in CONNECTION_FIELDS}
 
     async def asyncTearDown(self):
         await self.bot.close()
@@ -72,10 +73,13 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current.phase,"picture")
         self.assertEqual(current.bios,["hello","second bio"])
         self.assertEqual(current.last_message_id,1020)
-        for checkpoint,kind,expected in [(1030,"picture","background"),(1040,"background","music"),(1050,"music","review")]:
+        for checkpoint,kind,expected in [(1030,"picture","background"),(1040,"background","music"),(1050,"music","connections_1")]:
             await self.bot.skip_media(self.session.id,123,kind,checkpoint)
             self.assertEqual(self.bot.store.get(self.session.id).phase,expected)
-        self.assertEqual([b.label for b in self.channel.send.call_args.kwargs["view"].children],["Publish page","Edit names","Edit bio","Edit picture","Edit background","Edit music","Cancel"])
+        for page, phase in enumerate(CONNECTION_PHASES):
+            await self.bot.accept_connections(self.session.id, 123, phase, {}, 1060 + page)
+        self.assertEqual(self.bot.store.get(self.session.id).phase, "review")
+        self.assertEqual([b.label for b in self.channel.send.call_args.kwargs["view"].children],["Publish page","Edit names","Edit bio","Edit picture","Edit background","Edit music","Edit connections","Cancel"])
 
     async def test_other_users_and_stale_modal_cannot_edit(self):
         with self.assertRaises(UserError):
@@ -133,6 +137,8 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.store.get(self.session.id).phase,"music")
         with patch("media.shutil.which",return_value="ffprobe"),patch("media.subprocess.run",return_value=CompletedProcess([],0,stdout=b'{"format":{"format_name":"mp3"},"streams":[{"codec_type":"audio","codec_name":"mp3"}]}')):
             await self.bot.accept_upload(self.session.id,123,"music",[Attachment("song.mp3",base64.b64decode(fixture["mp3"]))],1300)
+        self.assertEqual(self.bot.store.get(self.session.id).phase,"connections_1")
+        await self.bot.skip_connections(self.session.id, 123, "connections_1", 1310)
         self.assertEqual(self.bot.store.get(self.session.id).phase,"review")
         from core import Store
         self.bot.store.close()
@@ -156,9 +162,90 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.store.get(self.session.id).phase,"background")
 
     async def test_editing_text_after_media_does_not_repeat_upload_steps(self):
-        self.bot.store.update(self.session.id,phase="bio",names=["Pollo"],bios=["old"],media=self.completed_media)
+        self.bot.store.update(self.session.id,phase="bio",names=["Pollo"],bios=["old"],media=self.completed_media,connections=self.completed_connections)
         await self.bot.accept_text(self.session.id,123,"bio","edited",1100)
         self.assertEqual(self.bot.store.get(self.session.id).phase,"review")
+
+    async def test_connections_popups_cover_all_services_with_optional_fields_and_format_examples(self):
+        self.bot.store.update(self.session.id, phase="connections_1", names=["Pollo"], bios=["hello"], media=self.completed_media)
+        interaction = Mock()
+        interaction.user.id, interaction.channel_id, interaction.guild_id = 123, 777, 456
+        interaction.channel = self.channel
+        interaction.response.send_modal = AsyncMock()
+        interaction.response.defer = AsyncMock()
+        interaction.edit_original_response = AsyncMock()
+        entered = {key: "username" for key, _, _ in CONNECTION_FIELDS}
+        entered.update(DISCORD="123456789012345678", WEBSITE="https://example.com", EMAIL="you@example.com")
+        seen = set()
+        for page, phase in enumerate(CONNECTION_PHASES):
+            current = self.bot.store.get(self.session.id)
+            view = WizardView(self.bot, current)
+            await view.children[0].callback(interaction)
+            modal = interaction.response.send_modal.call_args.args[0]
+            self.assertIsInstance(modal, ConnectionsModal)
+            self.assertLessEqual(len(modal.children), 5)
+            for key, field in modal.inputs.items():
+                seen.add(key)
+                self.assertFalse(field.required)
+                self.assertTrue(field.placeholder)
+                label = next(item for item in modal.children if item.component is field)
+                self.assertEqual(label.description, "Leave blank for no connection.")
+                self.assertLessEqual(len(label.text), 45)
+                self.assertFalse(label.to_component_dict()["component"]["required"])
+                field._value = entered[key]
+            interaction.id = 1100 + page
+            await modal.on_submit(interaction)
+        current = self.bot.store.get(self.session.id)
+        self.assertEqual(seen, set(entered))
+        self.assertEqual(current.connections, entered)
+        self.assertEqual(current.phase, "review")
+        self.assertIn("Connections", [field.name for field in self.channel.send.call_args.kwargs["embed"].fields])
+
+    async def test_connection_edit_can_remove_one_link_and_keep_other_saved_groups(self):
+        connections = {**self.completed_connections, "GITHUB": "oldname", "YOUTUBE": "channel", "X": "handle", "EMAIL": "you@example.com"}
+        session = self.bot.store.update(self.session.id, phase="review", names=["Pollo"], bios=["hello"], media=self.completed_media, connections=connections)
+        interaction = Mock()
+        interaction.user.id, interaction.channel_id, interaction.guild_id, interaction.id = 123, 777, 456, 2000
+        interaction.channel = self.channel
+        interaction.response.defer = AsyncMock()
+        interaction.edit_original_response = AsyncMock()
+        view = WizardView(self.bot, session)
+        await next(button for button in view.children if button.label == "Edit connections").callback(interaction)
+        current = self.bot.store.get(session.id)
+        modal = ConnectionsModal(self.bot, current)
+        self.assertEqual(modal.inputs["GITHUB"].default, "oldname")
+        values = {key: connections[key] for key, _, _ in CONNECTION_GROUPS[0]}
+        values["GITHUB"] = ""
+        await self.bot.accept_connections(session.id, 123, "connections_1", values, 2010)
+        await self.bot.skip_connections(session.id, 123, "connections_2", 2020)
+        current = self.bot.store.get(session.id)
+        self.assertEqual(current.phase, "review")
+        self.assertEqual(current.connections, {**connections, "GITHUB": ""})
+
+    async def test_connections_reject_other_users_invalid_values_and_stale_popups(self):
+        self.bot.store.update(self.session.id, phase="connections_1", names=["Pollo"], bios=["hello"], media=self.completed_media)
+        for user, values in [(999, {"GITHUB": "hijacked"}), (123, {"GITHUB": "javascript:alert(1)"})]:
+            with self.assertRaises(UserError):
+                await self.bot.accept_connections(self.session.id, user, "connections_1", values, 1100)
+        self.assertEqual(self.bot.store.get(self.session.id).connections, {})
+        await self.bot.accept_connections(self.session.id, 123, "connections_1", {"GITHUB": "owner"}, 1110)
+        with self.assertRaises(UserError):
+            await self.bot.accept_connections(self.session.id, 123, "connections_1", {"GITHUB": "stale"}, 1120)
+        self.bot.store.update(self.session.id, phase="connections_1", last_message_id=2000)
+        with self.assertRaises(UserError):
+            await self.bot.accept_connections(self.session.id, 123, "connections_1", {"GITHUB": "stale"}, 1120)
+        self.assertEqual(self.bot.store.get(self.session.id).connections["GITHUB"], "owner")
+
+    async def test_connections_require_buttons_and_cannot_be_bypassed_at_publish(self):
+        self.bot.store.update(self.session.id, phase="connections_1", names=["Pollo"], bios=["hello"], media=self.completed_media)
+        message = SimpleNamespace(author=SimpleNamespace(id=123, bot=False), guild=SimpleNamespace(id=456), channel=self.channel, content="GITHUB=typed", id=1100, attachments=[])
+        await self.bot.on_message(message)
+        self.assertEqual(self.bot.store.get(self.session.id).connections, {})
+        self.assertIn("Enter connections", self.channel.send.call_args.args[0])
+        self.bot.store.update(self.session.id, phase="review")
+        with self.assertRaises(UserError):
+            await self.bot.publish_session(self.session.id)
+        self.bot.publisher.publish.assert_not_awaited()
 
     async def test_cancel_and_channel_deletion_remove_draft_files(self):
         self.bot.store.update(self.session.id,phase="picture",names=["Pollo"],bios=["hello"])
@@ -228,7 +315,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         names=["*"+str(n)+"🐈"*78 for n in range(10)]
         bios=["*"*598 for _ in range(3)]
         media={kind:{"original_name":"_*"*125+"🐈"*100} for kind in self.completed_media}
-        session=self.bot.store.update(self.session.id,phase="review",names=names,bios=bios,media=media)
+        session=self.bot.store.update(self.session.id,phase="review",names=names,bios=bios,media=media,connections={key:"🐈*"*100 for key,_,_ in CONNECTION_FIELDS})
         await self.bot.send_prompt(session)
         embed=self.channel.send.call_args.kwargs["embed"]
         units=lambda value:len(value.encode("utf-16-le"))//2
@@ -311,7 +398,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         interaction.guild.create_text_channel.assert_not_called()
 
     async def test_publish_with_lost_response_keeps_slot_locked(self):
-        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media)
+        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media,connections=self.completed_connections)
         async def lost_response(session,save,save_media):
             save("uncertain-commit")
             raise asyncio.TimeoutError()
@@ -323,14 +410,14 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([b.label for b in WizardView(self.bot,session).children],["Retry publish"])
 
     async def test_failure_before_commit_allows_safe_retry_and_cancel(self):
-        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media)
+        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media,connections=self.completed_connections)
         self.bot.publisher.publish.side_effect=asyncio.TimeoutError()
         await self.bot.publish_session(self.session.id)
         self.assertEqual(self.bot.store.get(self.session.id).phase,"review")
         self.assertTrue(self.bot.store.cancel(self.session.id))
 
     async def test_permission_failure_keeps_draft_and_can_publish_after_access_is_fixed(self):
-        self.bot.store.update(self.session.id, phase="review", names=["Pollo"], bios=["hello"], media=self.completed_media)
+        self.bot.store.update(self.session.id, phase="review", names=["Pollo"], bios=["hello"], media=self.completed_media, connections=self.completed_connections)
         self.bot.publisher.publish.side_effect = GitHubError(403, contents_write_denied=True)
         await self.bot.publish_session(self.session.id)
         current = self.bot.store.get(self.session.id)
@@ -343,8 +430,8 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.store.get(self.session.id).phase, "published")
         self.assertEqual(self.bot.store.count(123), 1)
 
-    async def test_successful_publish_consumes_slot_and_announces_commit(self):
-        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media)
+    async def test_successful_publish_consumes_slot_and_announces_submission(self):
+        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media,connections=self.completed_connections)
         self.bot.wait_for_site=AsyncMock()
         self.channel.send=AsyncMock(return_value=SimpleNamespace(id=3000))
         await self.bot.publish_session(self.session.id)
@@ -352,7 +439,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.store.get(self.session.id).phase,"published")
         self.assertEqual(self.bot.store.get(self.session.id).commit_sha,"committed")
         self.assertEqual(self.bot.store.count(123),1)
-        self.assertIn("https://onimai.site/pollo",self.channel.send.call_args.args[0])
+        self.assertEqual(self.channel.send.call_args.args[0], "Your page has been submitted: <https://onimai.site/pollo>\nA message will be sent here when it is published (est. ~1 min)")
 
     async def test_deleted_unpublished_channel_releases_draft_only(self):
         await self.bot.on_guild_channel_delete(self.channel)

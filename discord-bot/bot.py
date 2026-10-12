@@ -13,7 +13,7 @@ import aiohttp
 import discord
 from discord import app_commands
 
-from core import Store, Session, UserError, EndpointTaken, MEDIA_PHASES, validate_endpoint, parse_names, parse_bios, next_phase
+from core import Store, Session, UserError, EndpointTaken, MEDIA_PHASES, CONNECTION_FIELDS, CONNECTION_GROUPS, CONNECTION_PHASES, validate_endpoint, parse_names, parse_bios, parse_connections, next_phase
 from media import check_attachment, validate_media, upload_path, clean_uploads
 from publisher import Publisher, GitHubError
 
@@ -36,6 +36,14 @@ def preview_names(names: list[str]) -> str:
     if len(encoded) > 2048:
         return encoded[:2046].decode("utf-16-le", errors="ignore") + "…"
     return value or "—"
+
+
+def preview_connections(connections: dict) -> str:
+    value = discord.utils.escape_markdown("\n".join(f"{label}: {connections[key]}" for key, label, _ in CONNECTION_FIELDS if connections.get(key)))
+    encoded = value.encode("utf-16-le")
+    if len(encoded) > 800:
+        return encoded[:798].decode("utf-16-le", errors="ignore") + "…"
+    return value or "No connections"
 
 
 class TextModal(discord.ui.Modal):
@@ -63,6 +71,32 @@ class TextModal(discord.ui.Modal):
             await interaction.edit_original_response(content="Your draft is saved. Please try the input button again.")
 
 
+class ConnectionsModal(discord.ui.Modal):
+    def __init__(self, bot: BioBot, session: Session):
+        page = CONNECTION_PHASES.index(session.phase)
+        super().__init__(title=f"Connections {page + 1}/{len(CONNECTION_GROUPS)} · Optional", timeout=600)
+        self.bot, self.session_id, self.phase = bot, session.id, session.phase
+        self.inputs = {}
+        for key, label, example in CONNECTION_GROUPS[page]:
+            field = discord.ui.TextInput(
+                custom_id=key, style=discord.TextStyle.short, placeholder=example,
+                default=session.connections.get(key) or None, required=False, max_length=200,
+            )
+            self.inputs[key] = field
+            self.add_item(discord.ui.Label(text=label, description="Leave blank for no connection.", component=field))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self.bot.accept_connections(self.session_id, interaction.user.id, self.phase, {key: field.value for key, field in self.inputs.items()}, interaction.id)
+            await interaction.edit_original_response(content="Saved. Continue with the latest prompt in your creation channel.")
+        except UserError as exc:
+            await interaction.edit_original_response(content=str(exc))
+        except Exception:
+            LOG.exception("Connections save failed for session %s", self.session_id)
+            await interaction.edit_original_response(content="Your draft is saved. Please try the connections button again.")
+
+
 class WizardView(discord.ui.View):
     def __init__(self, bot: BioBot, session: Session):
         super().__init__(timeout=None)
@@ -71,6 +105,10 @@ class WizardView(discord.ui.View):
             self.button("Enter names" if session.phase == "names" else "Enter bio", session.phase, discord.ButtonStyle.primary)
         if session.phase in MEDIA_PHASES:
             self.button("Skip", "skip_" + session.phase, discord.ButtonStyle.secondary)
+        if session.phase in CONNECTION_PHASES:
+            page = CONNECTION_PHASES.index(session.phase) + 1
+            self.button(f"Enter connections {page}/{len(CONNECTION_GROUPS)}", session.phase, discord.ButtonStyle.primary)
+            self.button("Skip remaining connections", "skip_" + session.phase, discord.ButtonStyle.secondary)
         if session.phase in ("review", "publishing"):
             self.button("Publish page" if session.phase == "review" else "Retry publish", "publish", discord.ButtonStyle.success)
         if session.phase == "review":
@@ -78,7 +116,8 @@ class WizardView(discord.ui.View):
             self.button("Edit bio", "edit_bio", discord.ButtonStyle.secondary)
             for kind in MEDIA_PHASES:
                 self.button("Edit " + kind, "edit_" + kind, discord.ButtonStyle.secondary)
-        if session.phase in ("names", "bio", *MEDIA_PHASES, "review"):
+            self.button("Edit connections", "edit_connections", discord.ButtonStyle.secondary)
+        if session.phase in ("names", "bio", *MEDIA_PHASES, *CONNECTION_PHASES, "review"):
             self.button("Cancel", "cancel", discord.ButtonStyle.danger)
 
     def button(self, label: str, action: str, style: discord.ButtonStyle):
@@ -92,25 +131,29 @@ class WizardView(discord.ui.View):
             if session.phase in ("published", "cancelled", "creating"):
                 await interaction.response.send_message("This wizard is already finished or is still starting.", ephemeral=True)
                 return
-            if action in ("names", "bio"):
+            if action in ("names", "bio", *CONNECTION_PHASES):
                 if session.phase != action:
                     await interaction.response.send_message("Use the buttons on the latest prompt.", ephemeral=True)
                     return
-                await interaction.response.send_modal(TextModal(self.bot, session, action))
+                await interaction.response.send_modal(ConnectionsModal(self.bot, session) if action in CONNECTION_PHASES else TextModal(self.bot, session, action))
                 return
             await interaction.response.defer(ephemeral=True, thinking=True)
             try:
                 if action == "publish":
                     await self.bot.publish_session(session.id)
                     current = self.bot.store.get(session.id)
-                    await interaction.edit_original_response(content="Your page was committed. The website link is in this channel." if current.phase == "published" else "Check the latest message in this channel to retry.")
+                    await interaction.edit_original_response(content="Your page was submitted. The website link is in this channel." if current.phase == "published" else "Check the latest message in this channel to retry.")
                 elif action.startswith("skip_"):
-                    await self.bot.skip_media(session.id, interaction.user.id, action.removeprefix("skip_"), interaction.id)
+                    phase = action.removeprefix("skip_")
+                    if phase in CONNECTION_PHASES:
+                        await self.bot.skip_connections(session.id, interaction.user.id, phase, interaction.id)
+                    else:
+                        await self.bot.skip_media(session.id, interaction.user.id, phase, interaction.id)
                     await interaction.edit_original_response(content="Skipped. Continue with the latest prompt in this channel.")
                 else:
                     async with self.bot.user_lock(session.user_id):
                         session = self.bot.store.get(session.id)
-                        if session.phase not in ("names", "bio", *MEDIA_PHASES, "review"):
+                        if session.phase not in ("names", "bio", *MEDIA_PHASES, *CONNECTION_PHASES, "review"):
                             raise UserError("This draft is being published or has already finished.")
                         if action == "cancel":
                             self.bot.store.cancel(session.id, delete_after=time.time() + CANCEL_DELETE_DELAY)
@@ -122,11 +165,11 @@ class WizardView(discord.ui.View):
                             await interaction.edit_original_response(content="Cancelled. This channel will be deleted in 15 seconds. You can use /create for a new endpoint.")
                         else:
                             field = action.removeprefix("edit_")
-                            if field not in ("names", "bio", *MEDIA_PHASES):
+                            if field not in ("names", "bio", *MEDIA_PHASES, "connections"):
                                 raise UserError("Use the latest prompt's buttons.")
                             if session.prompt_id:
                                 await self.bot.clear_buttons(interaction.channel, session.prompt_id)
-                            session = self.bot.store.update(session.id, phase=field, prompt_id=None, last_message_id=interaction.id)
+                            session = self.bot.store.update(session.id, phase=CONNECTION_PHASES[0] if field == "connections" else field, prompt_id=None, last_message_id=interaction.id)
                             await self.bot.send_prompt(session)
                             await interaction.edit_original_response(content="Continue with the latest prompt in this channel.")
             except UserError as exc:
@@ -326,6 +369,11 @@ class BioBot(discord.Client):
             }
             title, content, description = prompts[session.phase]
             embed = discord.Embed(title=title, description=description, color=0xA369B9)
+        elif session.phase in CONNECTION_PHASES:
+            page = CONNECTION_PHASES.index(session.phase)
+            content = f"Click **Enter connections {page + 1}/{len(CONNECTION_GROUPS)}** to add your connections. Leave blank for no connection."
+            services = ", ".join(label for _, label, _ in CONNECTION_GROUPS[page])
+            embed = discord.Embed(title=f"Step 6 · Connections {page + 1}/{len(CONNECTION_GROUPS)}", description=f"{services}\n\nEach field shows an example of the format. Leave blank for no connection. Click **Skip remaining connections** if you have no more to add.", color=0xA369B9)
         else:
             content = "Review your page, then click Publish page." if session.phase == "review" else "Publishing is waiting for a retry. Your draft and page slot are saved."
             bio_preview = discord.utils.escape_markdown("\n\n".join(session.bios)) or "—"
@@ -339,6 +387,7 @@ class BioBot(discord.Client):
                 if len(encoded) > 400:
                     value = encoded[:398].decode("utf-16-le", errors="ignore") + "…"
                 embed.add_field(name={"picture":"Profile picture", "background":"Background", "music":"Music"}[kind], value=value, inline=True)
+            embed.add_field(name="Connections", value=preview_connections(session.connections), inline=False)
         embed.set_footer(text="Only you and server administrators can see this creation channel.")
         kwargs = {"content":content,"embed":embed,"view":view}
         if file:
@@ -360,11 +409,41 @@ class BioBot(discord.Client):
             fields = {"names" if field == "names" else "bios":values,"prompt_id":None}
             if message_id:
                 fields["last_message_id"] = message_id
-            fields["phase"] = next_phase(values if field == "names" else session.names, values if field == "bio" else session.bios, session.media)
+            fields["phase"] = next_phase(values if field == "names" else session.names, values if field == "bio" else session.bios, session.media, session.connections)
             session = self.store.update(session.id, **fields)
             if old_prompt:
                 await self.clear_buttons(self.get_channel(session.channel_id), old_prompt)
             await self.send_prompt(session)
+
+    async def accept_connections(self, session_id: int, user_id: int, phase: str, values: dict[str, str], message_id: int):
+        async with self.user_lock(user_id):
+            session = self.store.get(session_id)
+            if not session or session.user_id != user_id or session.phase != phase or phase not in CONNECTION_PHASES:
+                raise UserError("Use the connections button on the latest prompt.")
+            if session.last_message_id and message_id <= session.last_message_id:
+                raise UserError("That popup is out of date. Use the latest connections button.")
+            page = CONNECTION_PHASES.index(phase)
+            keys = {key for key, _, _ in CONNECTION_GROUPS[page]}
+            if not set(values) <= keys:
+                raise UserError("Use the fields in the current connections popup.")
+            connections = {**session.connections, **parse_connections({key: values.get(key, "") for key in keys})}
+            following = CONNECTION_PHASES[page + 1] if page + 1 < len(CONNECTION_PHASES) else next_phase(session.names, session.bios, session.media, connections)
+            current = self.store.update(session.id, connections=connections, phase=following, prompt_id=None, last_message_id=message_id)
+            if session.prompt_id:
+                await self.clear_buttons(self.get_channel(session.channel_id), session.prompt_id)
+            await self.send_prompt(current)
+
+    async def skip_connections(self, session_id: int, user_id: int, phase: str, checkpoint: int):
+        async with self.user_lock(user_id):
+            session = self.store.get(session_id)
+            if not session or session.user_id != user_id or session.phase != phase or phase not in CONNECTION_PHASES:
+                raise UserError("Use the Skip button on the latest connections prompt.")
+            remaining = CONNECTION_GROUPS[CONNECTION_PHASES.index(phase):]
+            connections = {**session.connections, **{key: session.connections.get(key, "") for fields in remaining for key, _, _ in fields}}
+            current = self.store.update(session.id, connections=connections, phase=next_phase(session.names, session.bios, session.media, connections), prompt_id=None, last_message_id=checkpoint)
+            if session.prompt_id:
+                await self.clear_buttons(self.get_channel(session.channel_id), session.prompt_id)
+            await self.send_prompt(current)
 
     async def skip_media(self, session_id: int, user_id: int, kind: str, checkpoint: int):
         async with self.user_lock(user_id):
@@ -373,7 +452,7 @@ class BioBot(discord.Client):
                 raise UserError("Use the Skip button on the latest upload prompt.")
             old_entry = session.media.get(kind)
             media = {**session.media, kind:None}
-            current = self.store.update(session.id, media=media, phase=next_phase(session.names, session.bios, media), prompt_id=None, last_message_id=checkpoint)
+            current = self.store.update(session.id, media=media, phase=next_phase(session.names, session.bios, media, session.connections), prompt_id=None, last_message_id=checkpoint)
             if old_entry:
                 upload_path(self.data_root, session.id, old_entry["path"]).unlink(missing_ok=True)
             if session.prompt_id:
@@ -410,7 +489,7 @@ class BioBot(discord.Client):
                     "sha256":hashlib.sha256(destination.read_bytes()).hexdigest(),
                 }
                 media = {**session.media, kind:entry}
-                current = self.store.update(session.id, media=media, phase=next_phase(session.names, session.bios, media), prompt_id=None, last_message_id=message_id)
+                current = self.store.update(session.id, media=media, phase=next_phase(session.names, session.bios, media, session.connections), prompt_id=None, last_message_id=message_id)
                 saved = True
                 previous = session.media.get(kind)
                 if previous:
@@ -432,6 +511,9 @@ class BioBot(discord.Client):
         try:
             if session.phase in ("names", "bio"):
                 await message.channel.send("Please click **Enter names**." if session.phase == "names" else "Please click **Enter bio**.")
+                return
+            if session.phase in CONNECTION_PHASES:
+                await message.channel.send("Please click **Enter connections**. Leave blank in the popup for no connection.")
                 return
             if session.phase not in MEDIA_PHASES:
                 return
@@ -455,8 +537,8 @@ class BioBot(discord.Client):
                 return
             if session.phase not in ("review","publishing") or not session.names or not session.bios:
                 raise UserError("Complete the names and bio steps before publishing.")
-            if session.phase == "review" and next_phase(session.names, session.bios, session.media) != "review":
-                raise UserError("Complete or skip the picture, background and music steps before publishing.")
+            if session.phase == "review" and next_phase(session.names, session.bios, session.media, session.connections) != "review":
+                raise UserError("Complete or skip the media and connections steps before submitting your page.")
             channel = self.get_channel(session.channel_id)
             session = self.store.update(session.id, phase="publishing")
             try:
@@ -485,7 +567,7 @@ class BioBot(discord.Client):
             if channel:
                 if original.prompt_id:
                     await self.clear_buttons(channel, original.prompt_id)
-                await channel.send(f"Your page has been committed: <{self.site}/{session.endpoint}>\nGitHub Pages is deploying it. I'll check when it is available.")
+                await channel.send(f"Your page has been submitted: <{self.site}/{session.endpoint}>\nA message will be sent here when it is published (est. ~1 min)")
                 self.task(self.wait_for_site(session))
             LOG.info("Published /%s in commit %s", session.endpoint, sha[:12])
 
@@ -504,7 +586,7 @@ class BioBot(discord.Client):
                     pass
                 await asyncio.sleep(15)
             if channel:
-                await channel.send(f"Your page is committed, but the website is still deploying. Try <{self.site}/{session.endpoint}> shortly.")
+                await channel.send(f"Your page is submitted, but the website is still deploying. Try <{self.site}/{session.endpoint}> shortly.")
         except Exception:
             LOG.exception("Website availability check failed for session %s", session.id)
 

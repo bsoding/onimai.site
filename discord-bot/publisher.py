@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 import aiohttp
 
-from core import EndpointTaken, Session, UserError, profile_html
+from core import EndpointTaken, Session, UserError, profile_html, connections_text
 from media import upload_path, EXTENSIONS
 
 LOG = logging.getLogger("onimai")
@@ -122,7 +122,7 @@ class Publisher:
                     "settings/names.txt": "\n".join(session.names) + "\n",
                     "settings/bios.txt": "\n\n".join(session.bios) + "\n",
                     "settings/badges.txt": "",
-                    "settings/connections.txt": "",
+                    "settings/connections.txt": connections_text(session.connections),
                 }
                 replaced = set(overrides) | set(media_paths.values())
                 entries = [{"path":session.endpoint + "/" + entry["path"][len("example/"):], "mode":entry["mode"], "type":"blob", "sha":entry["sha"]} for entry in template if entry["path"][len("example/"):] not in replaced]

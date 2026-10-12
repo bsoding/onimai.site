@@ -8,10 +8,27 @@ import sqlite3
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 MAX_PAGES = 3
 MEDIA_PHASES = ("picture", "background", "music")
-ACTIVE_PHASES = ("creating", "names", "bio", *MEDIA_PHASES, "review", "publishing")
+CONNECTION_FIELDS = (
+    ("GITHUB", "GitHub", "username"),
+    ("YOUTUBE", "YouTube", "username"),
+    ("INSTAGRAM", "Instagram", "username"),
+    ("SPOTIFY", "Spotify", "username or https://open.spotify.com/user/username"),
+    ("TWITCH", "Twitch", "username"),
+    ("TIKTOK", "TikTok", "username"),
+    ("X", "X / Twitter", "username"),
+    ("TELEGRAM", "Telegram", "username"),
+    ("DISCORD", "Discord", "username or 123456789012345678"),
+    ("WEBSITE", "Website", "https://example.com"),
+    ("EMAIL", "Email", "you@example.com"),
+)
+CONNECTION_GROUPS = (CONNECTION_FIELDS[:4], CONNECTION_FIELDS[4:8], CONNECTION_FIELDS[8:])
+CONNECTION_PHASES = tuple(f"connections_{i + 1}" for i in range(len(CONNECTION_GROUPS)))
+CONNECTION_KEYS = {field[0] for field in CONNECTION_FIELDS}
+ACTIVE_PHASES = ("creating", "names", "bio", *MEDIA_PHASES, *CONNECTION_PHASES, "review", "publishing")
 ACTIVE_SQL = ",".join("'" + phase + "'" for phase in ACTIVE_PHASES)
 RESERVED = {"assets", "example", "discord-bot", "api", "admin", "www", "create", "settings"}
 
@@ -63,12 +80,72 @@ def script_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-def next_phase(names: list[str], bios: list[str], media: dict) -> str:
+def parse_connections(values: dict[str, str]) -> dict[str, str]:
+    if not set(values) <= CONNECTION_KEYS:
+        raise UserError("Please use the supported connections in the popup.")
+    result = {}
+    for key, value in values.items():
+        label = next(field[1] for field in CONNECTION_FIELDS if field[0] == key)
+        if not isinstance(value, str) or any(unicodedata.category(c) == "Cc" for c in value):
+            raise UserError(f"Enter {label} on one line, or leave it blank for no connection.")
+        value = value.strip()
+        if len(value) > 200:
+            raise UserError(f"Use up to 200 characters for {label}.")
+        if not value:
+            result[key] = ""
+            continue
+        if re.match(r"^https?://", value, re.I):
+            try:
+                url = urlsplit(value)
+                valid = bool(url.hostname) and not re.search(r"[\s\\]", value) and url.username is None and url.password is None
+            except ValueError:
+                valid = False
+            if not valid:
+                raise UserError(f"Use a valid HTTP or HTTPS link for {label}.")
+        elif re.match(r"^[a-z][a-z\d+.-]*:", value, re.I):
+            raise UserError(f"Use a username or an HTTP/HTTPS link for {label}.")
+        elif key == "EMAIL":
+            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+                raise UserError("Use an email address such as you@example.com, or leave it blank.")
+        elif key == "WEBSITE":
+            try:
+                url = urlsplit("https://" + value)
+                valid = bool(url.hostname) and not re.search(r"[\s\\]", value) and url.username is None and url.password is None
+            except ValueError:
+                valid = False
+            if not valid:
+                raise UserError("Use a website such as https://example.com, or leave it blank.")
+        elif key == "DISCORD":
+            value = value.removeprefix("@")
+            if not value:
+                raise UserError("Use a Discord username or user ID, or leave it blank.")
+        else:
+            value = value.removeprefix("@")
+            if not value or re.search(r"[\s/\\?#]", value):
+                raise UserError(f"Use a {label} username or full HTTP/HTTPS link, or leave it blank.")
+        result[key] = value
+    return result
+
+
+def connections_text(values: dict[str, str]) -> str:
+    values = parse_connections(values)
+    if not any(values.values()):
+        return ""
+    return "".join(f"{key}={values.get(key, '')}\n" for key, _, _ in CONNECTION_FIELDS)
+
+
+def next_phase(names: list[str], bios: list[str], media: dict, connections: dict) -> str:
     if not names:
         return "names"
     if not bios:
         return "bio"
-    return next((phase for phase in MEDIA_PHASES if phase not in media), "review")
+    for phase in MEDIA_PHASES:
+        if phase not in media:
+            return phase
+    for phase, fields in zip(CONNECTION_PHASES, CONNECTION_GROUPS):
+        if any(key not in connections for key, _, _ in fields):
+            return phase
+    return "review"
 
 
 def profile_html(template: str, names: list[str], bios: list[str], media_paths: dict[str, str] | None = None) -> str:
@@ -120,6 +197,7 @@ class Session:
     commit_sha: str | None
     created_at: str
     delete_after: float | None
+    connections: dict
 
 
 class Store:
@@ -152,6 +230,10 @@ class Store:
         if "delete_after" not in columns:
             with self.db:
                 self.db.execute("ALTER TABLE sessions ADD COLUMN delete_after REAL")
+        if "connections" not in columns:
+            with self.db:
+                self.db.execute("ALTER TABLE sessions ADD COLUMN connections TEXT NOT NULL DEFAULT '{}'")
+                self.db.execute("UPDATE sessions SET phase='connections_1',prompt_id=NULL WHERE phase='review'")
 
     def close(self) -> None:
         self.db.close()
@@ -165,6 +247,7 @@ class Store:
             data[field] = int(data[field]) if data[field] is not None else None
         data["names"], data["bios"] = json.loads(data["names"]), json.loads(data["bios"])
         data["media"] = json.loads(data["media"])
+        data["connections"] = json.loads(data["connections"])
         return Session(**data)
 
     def get(self, session_id: int) -> Session | None:
@@ -202,10 +285,10 @@ class Store:
             raise
 
     def update(self, session_id: int, **fields) -> Session:
-        allowed = {"phase", "channel_id", "names", "bios", "media", "prompt_id", "last_message_id", "commit_sha", "delete_after"}
+        allowed = {"phase", "channel_id", "names", "bios", "media", "connections", "prompt_id", "last_message_id", "commit_sha", "delete_after"}
         if not fields or not set(fields) <= allowed:
             raise ValueError("Invalid session update")
-        values = [json.dumps(v, ensure_ascii=False) if k in ("names", "bios", "media") else str(v) if k.endswith("_id") and v is not None else v for k,v in fields.items()]
+        values = [json.dumps(v, ensure_ascii=False) if k in ("names", "bios", "media", "connections") else str(v) if k.endswith("_id") and v is not None else v for k,v in fields.items()]
         with self.db:
             self.db.execute("UPDATE sessions SET " + ",".join(k + "=?" for k in fields) + " WHERE id=?", (*values,session_id))
         return self.get(session_id)
