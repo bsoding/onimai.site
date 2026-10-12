@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,6 +34,9 @@ class FakePublisher(Publisher):
         if path == "/git/trees":
             self.tree_payloads.append(data)
             return {"sha":"new-tree"}
+        if method == "POST" and path == "/git/blobs":
+            raw=base64.b64decode(data["content"])
+            return {"sha":hashlib.sha1(("blob "+str(len(raw))+"\0").encode()+raw).hexdigest()}
         if path == "/git/commits":
             self.number += 1
             return {"sha":"commit"+str(self.number)}
@@ -105,6 +109,42 @@ class PublisherTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await Publisher.is_published(self.publisher,session))
         self.publisher.published = False
         self.assertFalse(await Publisher.is_published(self.publisher,session))
+
+    async def test_uploads_are_binary_blobs_in_the_same_profile_commit(self):
+        root=Path(self.directory.name)
+        self.publisher.media_root=root
+        directory=root/"uploads"/str(self.session.id)
+        directory.mkdir(parents=True)
+        data=b"uploaded-picture-bytes"
+        path=directory/"photo.gif"
+        path.write_bytes(data)
+        entry={"path":path.relative_to(root).as_posix(),"filename":"profile.gif","original_name":"photo.gif","size":len(data),"sha256":hashlib.sha256(data).hexdigest()}
+        session=self.store.update(self.session.id,media={"picture":entry,"background":None,"music":None})
+        blobs=[]
+        await self.publisher.publish(session,self.save,lambda kind,sha:blobs.append((kind,sha)))
+        expected=hashlib.sha1(("blob "+str(len(data))+"\0").encode()+data).hexdigest()
+        self.assertEqual(blobs,[("picture",expected)])
+        entries={e["path"]:e for e in self.publisher.tree_payloads[0]["tree"]}
+        self.assertEqual(entries["pollo/assets/profile.gif"]["sha"],expected)
+        self.assertIn('avatar: "assets/profile.gif"',entries["pollo/index.html"]["content"])
+        blob_data=next(payload for method,path,payload in self.publisher.calls if method=="POST" and path=="/git/blobs")
+        self.assertEqual(base64.b64decode(blob_data["content"]),data)
+
+    async def test_saved_blob_is_reused_on_retry(self):
+        root=Path(self.directory.name)
+        self.publisher.media_root=root
+        directory=root/"uploads"/str(self.session.id)
+        directory.mkdir(parents=True)
+        data=b"picture-bytes"
+        path=directory/"photo.png"
+        path.write_bytes(data)
+        entry={"path":path.relative_to(root).as_posix(),"filename":"profile.png","original_name":"photo.png","size":len(data),"sha256":hashlib.sha256(data).hexdigest(),"blob_sha":"previously-uploaded"}
+        session=self.store.update(self.session.id,media={"picture":entry})
+        await self.publisher.publish(session,self.save)
+        self.assertFalse(any(method=="POST" and path=="/git/blobs" for method,path,_ in self.publisher.calls))
+        entries=[e for e in self.publisher.tree_payloads[0]["tree"] if e["path"]=="pollo/assets/profile.png"]
+        self.assertEqual(len(entries),1)
+        self.assertEqual(entries[0]["sha"],"previously-uploaded")
 
     def test_existing_top_level_files_and_case_variants_are_reserved(self):
         self.assertTrue(Publisher.exists([{"path":"JVBJ/index.html"}],"jvbj"))

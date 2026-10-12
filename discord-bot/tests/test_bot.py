@@ -1,6 +1,9 @@
 import asyncio
 import os
 import tempfile
+import hashlib
+import json
+import base64
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +11,15 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from bot import BioBot, WizardView
 from core import UserError
+
+
+class Attachment:
+    def __init__(self, filename, content):
+        self.filename, self.content, self.size = filename, content, len(content)
+
+    async def save(self, path):
+        Path(path).write_bytes(self.content)
+        return len(self.content)
 
 
 class BotTests(unittest.IsolatedAsyncioTestCase):
@@ -27,6 +39,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.bot.publisher = SimpleNamespace(ensure_available=AsyncMock(), publish=AsyncMock(return_value="committed"))
         self.session = self.bot.store.reserve(123,456,"pollo")
         self.session = self.bot.store.update(self.session.id, phase="names", channel_id=777)
+        self.completed_media = {"picture":None,"background":None,"music":None}
 
     async def asyncTearDown(self):
         await self.bot.close()
@@ -43,7 +56,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
     async def test_names_then_bio_then_review_with_images(self):
         await self.bot.send_prompt(self.session)
         first = self.channel.send.call_args.kwargs
-        self.assertEqual(first["content"], "Please type your names/aliases for your page (one per line).")
+        self.assertEqual(first["content"], "Click **Enter names** to add your names/aliases (one per line).")
         self.assertEqual(first["file"].filename, "names.png")
         first["file"].close()
         await self.bot.accept_text(self.session.id,123,"names","Pollo\npollo.exe",1010)
@@ -52,10 +65,13 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.channel.send.call_args.kwargs["file"].close()
         await self.bot.accept_text(self.session.id,123,"bio","hello\n\nsecond bio",1020)
         current = self.bot.store.get(self.session.id)
-        self.assertEqual(current.phase,"review")
+        self.assertEqual(current.phase,"picture")
         self.assertEqual(current.bios,["hello","second bio"])
         self.assertEqual(current.last_message_id,1020)
-        self.assertEqual([b.label for b in self.channel.send.call_args.kwargs["view"].children],["Publish page","Edit names","Edit bio","Cancel"])
+        for checkpoint,kind,expected in [(1030,"picture","background"),(1040,"background","music"),(1050,"music","review")]:
+            await self.bot.skip_media(self.session.id,123,kind,checkpoint)
+            self.assertEqual(self.bot.store.get(self.session.id).phase,expected)
+        self.assertEqual([b.label for b in self.channel.send.call_args.kwargs["view"].children],["Publish page","Edit names","Edit bio","Edit picture","Edit background","Edit music","Cancel"])
 
     async def test_other_users_and_stale_modal_cannot_edit(self):
         with self.assertRaises(UserError):
@@ -70,10 +86,96 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
             await self.bot.accept_text(self.session.id,123,"names","")
         self.assertEqual(self.bot.store.get(self.session.id).phase,"names")
 
+    async def test_channel_text_never_sets_names_or_bios(self):
+        message=SimpleNamespace(author=SimpleNamespace(id=123,bot=False),guild=SimpleNamespace(id=456),channel=self.channel,id=1100,content="typed in channel",attachments=[])
+        await self.bot.on_message(message)
+        self.assertEqual(self.bot.store.get(self.session.id).names,[])
+        self.assertEqual(self.bot.store.get(self.session.id).phase,"names")
+        self.assertIn("Enter names",self.channel.send.call_args.args[0])
+        self.bot.store.update(self.session.id,phase="bio",names=["Pollo"])
+        await self.bot.on_message(message)
+        self.assertEqual(self.bot.store.get(self.session.id).bios,[])
+        self.assertEqual(self.bot.store.get(self.session.id).phase,"bio")
+        self.assertIn("Enter bio",self.channel.send.call_args.args[0])
+
+    async def test_button_modal_saves_names_and_moves_to_bio(self):
+        interaction=Mock()
+        interaction.user.id,interaction.channel_id,interaction.guild_id,interaction.id=123,777,456,1100
+        interaction.response.send_modal=AsyncMock()
+        view=WizardView(self.bot,self.session)
+        await view.children[0].callback(interaction)
+        modal=interaction.response.send_modal.call_args.args[0]
+        modal.text._value="Pollo\npollo.exe"
+        interaction.response.defer=AsyncMock()
+        interaction.edit_original_response=AsyncMock()
+        await modal.on_submit(interaction)
+        self.assertEqual(self.bot.store.get(self.session.id).names,["Pollo","pollo.exe"])
+        self.assertEqual(self.bot.store.get(self.session.id).phase,"bio")
+
+    async def test_uploads_advance_in_order_and_preserve_bytes_across_store_reopen(self):
+        self.bot.store.update(self.session.id,phase="picture",names=["Pollo"],bios=["hello"])
+        png=(Path(__file__).resolve().parents[1]/"assets/names.png").read_bytes()
+        await self.bot.accept_upload(self.session.id,123,"picture",[Attachment("../my-picture.PNG",png)],1100)
+        current=self.bot.store.get(self.session.id)
+        self.assertEqual(current.phase,"background")
+        picture_path=self.bot.data_root/current.media["picture"]["path"]
+        self.assertEqual(picture_path.read_bytes(),png)
+        self.assertEqual(current.media["picture"]["filename"],"profile.png")
+        self.assertEqual(current.media["picture"]["sha256"],hashlib.sha256(png).hexdigest())
+        fixture=json.loads((Path(__file__).parent/"fixtures/media.json").read_text())
+        from subprocess import CompletedProcess
+        with patch("media.shutil.which",return_value="ffprobe"),patch("media.subprocess.run",return_value=CompletedProcess([],0,stdout=b'{"format":{"format_name":"mov,mp4"},"streams":[{"codec_type":"video"}]}')):
+            await self.bot.accept_upload(self.session.id,123,"background",[Attachment("video.mp4",base64.b64decode(fixture["mp4"]))],1200)
+        self.assertEqual(self.bot.store.get(self.session.id).phase,"music")
+        with patch("media.shutil.which",return_value="ffprobe"),patch("media.subprocess.run",return_value=CompletedProcess([],0,stdout=b'{"format":{"format_name":"mp3"},"streams":[{"codec_type":"audio","codec_name":"mp3"}]}')):
+            await self.bot.accept_upload(self.session.id,123,"music",[Attachment("song.mp3",base64.b64decode(fixture["mp3"]))],1300)
+        self.assertEqual(self.bot.store.get(self.session.id).phase,"review")
+        from core import Store
+        self.bot.store.close()
+        self.bot.store=Store(self.bot.data_root/"pages.sqlite3")
+        current=self.bot.store.get(self.session.id)
+        self.assertEqual(set(current.media),{"picture","background","music"})
+        self.assertEqual(picture_path.read_bytes(),png)
+
+    async def test_invalid_or_other_users_uploads_cannot_advance(self):
+        self.bot.store.update(self.session.id,phase="picture",names=["Pollo"],bios=["hello"])
+        for uid,attachments in [(999,[Attachment("a.png",b"bad")]),(123,[Attachment("a.png",b"bad")]),(123,[Attachment("a.exe",b"bad")]),(123,[Attachment("a.png",b"bad"),Attachment("b.png",b"bad")])]:
+            with self.assertRaises(UserError):
+                await self.bot.accept_upload(self.session.id,uid,"picture",attachments,1100)
+            self.assertEqual(self.bot.store.get(self.session.id).phase,"picture")
+        self.assertEqual(list((self.bot.data_root/"uploads"/str(self.session.id)).iterdir()),[])
+
+    async def test_stale_skip_cannot_skip_later_stage(self):
+        self.bot.store.update(self.session.id,phase="background",names=["Pollo"],bios=["hello"],media={"picture":None})
+        with self.assertRaises(UserError):
+            await self.bot.skip_media(self.session.id,123,"picture",1100)
+        self.assertEqual(self.bot.store.get(self.session.id).phase,"background")
+
+    async def test_editing_text_after_media_does_not_repeat_upload_steps(self):
+        self.bot.store.update(self.session.id,phase="bio",names=["Pollo"],bios=["old"],media=self.completed_media)
+        await self.bot.accept_text(self.session.id,123,"bio","edited",1100)
+        self.assertEqual(self.bot.store.get(self.session.id).phase,"review")
+
+    async def test_cancel_and_channel_deletion_remove_draft_files(self):
+        self.bot.store.update(self.session.id,phase="picture",names=["Pollo"],bios=["hello"])
+        png=(Path(__file__).resolve().parents[1]/"assets/names.png").read_bytes()
+        await self.bot.accept_upload(self.session.id,123,"picture",[Attachment("photo.png",png)],1100)
+        self.assertTrue((self.bot.data_root/"uploads"/str(self.session.id)).exists())
+        await self.bot.on_guild_channel_delete(self.channel)
+        self.assertEqual(self.bot.store.count(123),0)
+        self.assertFalse((self.bot.data_root/"uploads"/str(self.session.id)).exists())
+
+    async def test_publish_cannot_bypass_the_media_steps(self):
+        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"])
+        with self.assertRaises(UserError):
+            await self.bot.publish_session(self.session.id)
+        self.bot.publisher.publish.assert_not_awaited()
+
     async def test_maximum_bios_and_emoji_aliases_fit_discord_embed_limits(self):
         names=["*"+str(n)+"🐈"*78 for n in range(10)]
         bios=["*"*598 for _ in range(3)]
-        session=self.bot.store.update(self.session.id,phase="review",names=names,bios=bios)
+        media={kind:{"original_name":"_*"*125+"🐈"*100} for kind in self.completed_media}
+        session=self.bot.store.update(self.session.id,phase="review",names=names,bios=bios,media=media)
         await self.bot.send_prompt(session)
         embed=self.channel.send.call_args.kwargs["embed"]
         units=lambda value:len(value.encode("utf-16-le"))//2
@@ -83,7 +185,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(units(embed.description)+sum(units(f.value)+units(f.name) for f in embed.fields)+units(embed.title)+units(embed.footer.text),6000)
 
     async def test_restart_reads_replies_only_after_latest_edit_prompt(self):
-        self.bot.store.update(self.session.id,prompt_id=2000,last_message_id=1900)
+        self.bot.store.update(self.session.id,phase="picture",names=["Pollo"],bios=["hello"],prompt_id=2000,last_message_id=1900)
         self.bot.get_guild=Mock(return_value=SimpleNamespace(id=456))
         self.bot.get_category=AsyncMock()
         async def empty_history(**kwargs):
@@ -103,6 +205,8 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.create_page(interaction,"another")
         interaction.response.defer.assert_awaited_once_with(ephemeral=True,thinking=True)
         self.assertIn("<#777>",interaction.edit_original_response.call_args.kwargs["content"])
+        self.assertNotIn("Let's create",interaction.edit_original_response.call_args.kwargs["content"])
+        self.assertNotIn("https://",interaction.edit_original_response.call_args.kwargs["content"])
         self.assertEqual(self.bot.store.count(123),1)
         self.bot.publisher.ensure_available.assert_not_awaited()
         self.channel.send.call_args.kwargs["file"].close()
@@ -134,7 +238,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         interaction.guild.create_text_channel=AsyncMock(return_value=self.channel)
         self.bot.get_category=AsyncMock(return_value=SimpleNamespace(channels=[]))
         await self.bot.create_page(interaction,"uncached")
-        self.assertEqual(self.channel.send.call_args.kwargs["content"],"Please type your names/aliases for your page (one per line).")
+        self.assertEqual(self.channel.send.call_args.kwargs["content"],"Click **Enter names** to add your names/aliases (one per line).")
         self.assertIn("<#777>",interaction.edit_original_response.call_args.kwargs["content"])
         self.bot.fetch_channel.assert_not_awaited()
 
@@ -153,8 +257,8 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         interaction.guild.create_text_channel.assert_not_called()
 
     async def test_publish_with_lost_response_keeps_slot_locked(self):
-        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"])
-        async def lost_response(session,save):
+        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media)
+        async def lost_response(session,save,save_media):
             save("uncertain-commit")
             raise asyncio.TimeoutError()
         self.bot.publisher.publish.side_effect=lost_response
@@ -165,14 +269,14 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([b.label for b in WizardView(self.bot,session).children],["Retry publish"])
 
     async def test_failure_before_commit_allows_safe_retry_and_cancel(self):
-        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"])
+        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media)
         self.bot.publisher.publish.side_effect=asyncio.TimeoutError()
         await self.bot.publish_session(self.session.id)
         self.assertEqual(self.bot.store.get(self.session.id).phase,"review")
         self.assertTrue(self.bot.store.cancel(self.session.id))
 
     async def test_successful_publish_consumes_slot_and_announces_commit(self):
-        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"])
+        self.bot.store.update(self.session.id,phase="review",names=["Pollo"],bios=["hello"],media=self.completed_media)
         self.bot.wait_for_site=AsyncMock()
         self.channel.send=AsyncMock(return_value=SimpleNamespace(id=3000))
         await self.bot.publish_session(self.session.id)

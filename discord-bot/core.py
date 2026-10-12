@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MAX_PAGES = 3
-ACTIVE_PHASES = ("creating", "names", "bio", "review", "publishing")
+MEDIA_PHASES = ("picture", "background", "music")
+ACTIVE_PHASES = ("creating", "names", "bio", *MEDIA_PHASES, "review", "publishing")
+ACTIVE_SQL = ",".join("'" + phase + "'" for phase in ACTIVE_PHASES)
 RESERVED = {"assets", "example", "discord-bot", "api", "admin", "www", "create", "settings"}
 
 
@@ -61,7 +63,15 @@ def script_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-def profile_html(template: str, names: list[str], bios: list[str]) -> str:
+def next_phase(names: list[str], bios: list[str], media: dict) -> str:
+    if not names:
+        return "names"
+    if not bios:
+        return "bio"
+    return next((phase for phase in MEDIA_PHASES if phase not in media), "review")
+
+
+def profile_html(template: str, names: list[str], bios: list[str], media_paths: dict[str, str] | None = None) -> str:
     """Update fallback text and sharing metadata without treating user text as code."""
     result, count = re.subn(r'fallbackName:\s*"(?:[^"\\]|\\.)*"', lambda _: "fallbackName: " + script_json(names[0]), template, count=1)
     if count != 1:
@@ -75,6 +85,22 @@ def profile_html(template: str, names: list[str], bios: list[str]) -> str:
         result = re.sub(rf'<meta {attribute}="{key}" content="[^"]*">', lambda _, a=attribute, k=key, v=value: f'<meta {a}="{k}" content="{v}">', result, count=1)
     result = re.sub(r'(<span id="nameText">).*?(</span>)', lambda m: m[1] + name + m[2], result, count=1, flags=re.S)
     result = re.sub(r'(<span id="bioText">).*?(</span>)', lambda m: m[1] + html.escape(bios[0]) + m[2], result, count=1, flags=re.S)
+    media_paths = media_paths or {}
+    settings = {"audio": media_paths.get("music", "")}
+    if "picture" in media_paths:
+        settings["avatar"] = media_paths["picture"]
+        result = result.replace('src="assets/profile.png"', 'src="' + html.escape(media_paths["picture"], quote=True) + '"')
+        result = result.replace('href="assets/profile.png"', 'href="' + html.escape(media_paths["picture"], quote=True) + '"')
+    if "background" in media_paths:
+        background = media_paths["background"]
+        settings["backgroundVideo"] = background if background.endswith(".mp4") else ""
+        if not background.endswith(".mp4"):
+            settings["backgroundImage"] = background
+            result = result.replace('poster="assets/background.svg"', 'poster="' + html.escape(background, quote=True) + '"')
+    for key, value in settings.items():
+        result, count = re.subn(r'\b' + key + r':\s*"(?:[^"\\]|\\.)*"', lambda _, v=value, k=key: k + ": " + script_json(v), result, count=1)
+        if count != 1:
+            raise RuntimeError("The example profile is missing " + key + ".")
     return result
 
 
@@ -88,6 +114,7 @@ class Session:
     channel_id: int | None
     names: list[str]
     bios: list[str]
+    media: dict
     prompt_id: int | None
     last_message_id: int | None
     commit_sha: str | None
@@ -115,6 +142,12 @@ class Store:
                 ON sessions(endpoint) WHERE phase != 'cancelled';
             CREATE INDEX IF NOT EXISTS user_sessions ON sessions(user_id);
         """)
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(sessions)")}
+        if "media" not in columns:
+            with self.db:
+                self.db.execute("ALTER TABLE sessions ADD COLUMN media TEXT NOT NULL DEFAULT '{}'")
+                # Old drafts at review have not seen the new upload steps yet.
+                self.db.execute("UPDATE sessions SET phase='picture',prompt_id=NULL WHERE phase='review'")
 
     def close(self) -> None:
         self.db.close()
@@ -127,6 +160,7 @@ class Store:
         for field in ("user_id", "guild_id", "channel_id", "prompt_id", "last_message_id"):
             data[field] = int(data[field]) if data[field] is not None else None
         data["names"], data["bios"] = json.loads(data["names"]), json.loads(data["bios"])
+        data["media"] = json.loads(data["media"])
         return Session(**data)
 
     def get(self, session_id: int) -> Session | None:
@@ -136,10 +170,10 @@ class Store:
         return self._session(self.db.execute("SELECT * FROM sessions WHERE channel_id=? AND phase != 'cancelled'", (str(channel_id),)).fetchone())
 
     def active_for_user(self, user_id: int) -> Session | None:
-        return self._session(self.db.execute("SELECT * FROM sessions WHERE user_id=? AND phase IN ('creating','names','bio','review','publishing') ORDER BY id LIMIT 1", (str(user_id),)).fetchone())
+        return self._session(self.db.execute("SELECT * FROM sessions WHERE user_id=? AND phase IN (" + ACTIVE_SQL + ") ORDER BY id LIMIT 1", (str(user_id),)).fetchone())
 
     def active(self) -> list[Session]:
-        return [self._session(row) for row in self.db.execute("SELECT * FROM sessions WHERE phase IN ('creating','names','bio','review','publishing') ORDER BY id")]
+        return [self._session(row) for row in self.db.execute("SELECT * FROM sessions WHERE phase IN (" + ACTIVE_SQL + ") ORDER BY id")]
 
     def count(self, user_id: int) -> int:
         return self.db.execute("SELECT count(*) FROM sessions WHERE user_id=? AND phase != 'cancelled'", (str(user_id),)).fetchone()[0]
@@ -161,15 +195,16 @@ class Store:
             raise
 
     def update(self, session_id: int, **fields) -> Session:
-        allowed = {"phase", "channel_id", "names", "bios", "prompt_id", "last_message_id", "commit_sha"}
+        allowed = {"phase", "channel_id", "names", "bios", "media", "prompt_id", "last_message_id", "commit_sha"}
         if not fields or not set(fields) <= allowed:
             raise ValueError("Invalid session update")
-        values = [json.dumps(v, ensure_ascii=False) if k in ("names", "bios") else str(v) if k.endswith("_id") and v is not None else v for k,v in fields.items()]
+        values = [json.dumps(v, ensure_ascii=False) if k in ("names", "bios", "media") else str(v) if k.endswith("_id") and v is not None else v for k,v in fields.items()]
         with self.db:
             self.db.execute("UPDATE sessions SET " + ",".join(k + "=?" for k in fields) + " WHERE id=?", (*values,session_id))
         return self.get(session_id)
 
     def cancel(self, session_id: int) -> bool:
         with self.db:
-            cursor = self.db.execute("UPDATE sessions SET phase='cancelled' WHERE id=? AND phase IN ('creating','names','bio','review')", (session_id,))
+            cancellable = ",".join("'" + phase + "'" for phase in ACTIVE_PHASES if phase != "publishing")
+            cursor = self.db.execute("UPDATE sessions SET phase='cancelled' WHERE id=? AND phase IN (" + cancellable + ")", (session_id,))
         return cursor.rowcount == 1

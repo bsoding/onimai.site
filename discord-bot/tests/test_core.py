@@ -1,5 +1,6 @@
 import concurrent.futures
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
 
@@ -98,6 +99,34 @@ class CoreTests(unittest.TestCase):
         self.assertIn("&lt;img src=x&gt;", rendered)
         self.assertIn("&quot; onload=&quot;", rendered)
         self.assertNotIn("<img src=x>", rendered)
+
+    def test_media_html_uses_uploads_and_disables_video_for_image_background(self):
+        template=(Path(__file__).resolve().parents[2]/"example/index.html").read_text(encoding="utf-8")
+        rendered=profile_html(template,["Pollo"],["hello"],{"picture":"assets/profile.gif","background":"assets/background.jpg","music":"assets/background_music.mp3"})
+        self.assertIn('avatar: "assets/profile.gif"',rendered)
+        self.assertIn('backgroundVideo: ""',rendered)
+        self.assertIn('backgroundImage: "assets/background.jpg"',rendered)
+        self.assertIn('audio: "assets/background_music.mp3"',rendered)
+        self.assertIn('id="avatar" class="avatar" src="assets/profile.gif"',rendered)
+        self.assertIn('rel="icon" href="assets/profile.gif"',rendered)
+
+    def test_legacy_database_migration_keeps_names_bios_quota_and_number(self):
+        self.store.close()
+        self.path.unlink()
+        db=sqlite3.connect(self.path)
+        db.executescript("""
+        CREATE TABLE sessions(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id TEXT NOT NULL,guild_id TEXT NOT NULL,endpoint TEXT NOT NULL COLLATE NOCASE,phase TEXT NOT NULL DEFAULT 'creating',channel_id TEXT,names TEXT NOT NULL DEFAULT '[]',bios TEXT NOT NULL DEFAULT '[]',prompt_id TEXT,last_message_id TEXT,commit_sha TEXT,created_at TEXT NOT NULL DEFAULT '2026-10-11T00:00:00Z');
+        INSERT INTO sessions(id,user_id,guild_id,endpoint,phase,names,bios,prompt_id) VALUES(12,'123','456','legacy','review','["Pollo"]','["hello"]','999');
+        """)
+        db.close()
+        self.store=Store(self.path)
+        current=self.store.get(12)
+        self.assertEqual(current.phase,"picture")
+        self.assertEqual(current.names,["Pollo"])
+        self.assertEqual(current.bios,["hello"])
+        self.assertEqual(current.media,{})
+        self.assertEqual(self.store.count(123),1)
+        self.assertEqual(self.store.reserve(999,456,"new").id,13)
 
 
 if __name__ == "__main__":
